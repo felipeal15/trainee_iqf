@@ -1,0 +1,14 @@
+# Dados brutos do Economatica (licenciados para o Insper, pesados)
+data/raw/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Sistema
+.DS_Store
+Thumbs.db
+~$*.xlsx
