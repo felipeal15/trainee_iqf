@@ -139,15 +139,19 @@ def carregar_dados(atualizar_benchmark: bool = False) -> Dados:
     precos.loc[precos["retorno_suspeito"], "retorno"] = 0.0
     retorno = precos.pivot(index="data", columns="ticker", values="retorno")
     volume = precos.pivot(index="data", columns="ticker", values="volume_mil")
+    calendario = retorno.index
 
     vm = pd.read_parquet(PROCESSED / "valor_mercado_mensal.parquet")
     vm["ticker"] = vm["ticker"].astype(str)
     valor_mercado = vm.pivot(index="data", columns="ticker", values="valor_mercado_mil")
+    # O valor mensal vem datado no último dia do mês, que pode cair num fim de semana. Ele é o
+    # valor do último pregão do mês, então passa a ter essa data. Senão o rebalanceamento no
+    # último pregão não enxergaria o valor do próprio mês.
+    valor_mercado.index = calendario[calendario.searchsorted(valor_mercado.index, side="right") - 1]
 
     fundamentos = pd.read_parquet(PROCESSED / "fundamentos_trimestrais.parquet")
     fundamentos["ticker"] = fundamentos["ticker"].astype(str)
 
-    calendario = retorno.index
     bench = carregar_benchmark(calendario.min(), calendario.max(), atualizar_benchmark)
     # CDI vira um índice acumulado antes de ir para o calendário da B3, para não perder
     # nem duplicar dias quando os calendários do BCB e da bolsa não batem

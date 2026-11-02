@@ -69,12 +69,12 @@ def datas_rebalanceamento(calendario: pd.DatetimeIndex, frequencia: str,
     return pd.DatetimeIndex(datas.values)
 
 
-def retornos_buy_and_hold(retornos: pd.DataFrame, tickers: list[str]) -> pd.Series:
-    """Retorno diário de uma carteira que compra peso igual em `tickers` no início do período
+def retornos_buy_and_hold(retornos: pd.DataFrame, pesos: pd.Series) -> pd.Series:
+    """Retorno diário de uma carteira que compra `pesos` (somando 1) no início do período
     e não mexe mais. Os pesos andam com os preços (quem sobe passa a pesar mais), como numa
     carteira real entre dois rebalanceamentos."""
-    r = retornos.reindex(columns=tickers).fillna(0.0)
-    valor = (1 + r).cumprod().mean(axis=1)  # valor da carteira, começando em 1
+    r = retornos.reindex(columns=pesos.index).fillna(0.0)
+    valor = (1 + r).cumprod() @ pesos  # valor da carteira, começando em 1
     return valor.pct_change().fillna(valor.iloc[0] - 1)
 
 
@@ -93,7 +93,7 @@ def rodar_backtest(dados: Dados, datas_rebal: pd.DatetimeIndex, selecionar: Sele
         # Compra no fechamento de data_atual: os retornos contam a partir do pregão seguinte
         dias = dados.calendario
         periodo = dados.retorno.loc[(dias > data_atual) & (dias <= data_prox_rebal)]
-        pedacos.append(retornos_buy_and_hold(periodo, tickers))
+        pedacos.append(retornos_buy_and_hold(periodo, pd.Series(1 / len(tickers), index=tickers)))
     return Resultado(retornos=pd.concat(pedacos).rename("carteira"), carteiras=carteiras)
 
 
