@@ -7,9 +7,18 @@ Carteira 65% defensiva (Quality + Low Vol → Value, rebalanceamento trimestral)
 ```bash
 pip install -r requirements.txt
 python src/limpeza.py        # data/raw/*.xlsx -> data/processed/*.parquet
+python src/backtest.py       # teste do motor: peso igual no universo x Ibovespa
 ```
 
 Os xlsx brutos do Economatica não estão no Git. Peça a pasta `data/raw/` para o grupo (OneDrive).
+O Ibovespa e o CDI são baixados na primeira execução (precisa de internet) e ficam em `data/processed/benchmark_diario.parquet`.
+
+Para usar as bases já no formato do backtest (num notebook, com `sys.path.append("src")`):
+
+```python
+from dados import carregar_dados
+dados = carregar_dados()   # dados.retorno, dados.volume, dados.valor_mercado, dados.fundamentos, dados.ibov, dados.cdi
+```
 
 Para carregar os dados limpos:
 

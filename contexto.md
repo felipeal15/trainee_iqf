@@ -49,7 +49,9 @@ Fórmulas de referência:
 
 Baixado em **01/11/2026** pelo Felipe (só funciona no Wi-Fi do Insper).
 
-**Universo bruto:** Screening → Ações → "Básico: Ações negociadas na Bovespa" (475 tickers, **incluindo ações canceladas**, o que evita viés de sobrevivência).
+**Universo bruto:** Screening → Ações → "Básico: Ações negociadas na Bovespa" (475 tickers).
+
+⚠️ A ideia era incluir as ações canceladas para evitar viés de sobrevivência, mas **o export não as trouxe** (ver "Verificação da limpeza" na seção 3 e P11).
 
 **Parâmetros comuns:** data inicial 01/01/2000, data final 23/10/2026, moeda original (R\$ nominal, **sem** ajuste por inflação), cabeçalho = código (ticker).
 
@@ -122,13 +124,22 @@ Isso combina o preço atual com o último lucro já divulgado, que é o que um i
 
 Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente com o lucro reportado.
 
+### Verificação da limpeza (01/11/2026, antes do backtest)
+
+| Achado | Impacto | O que fazer |
+|---|---|---|
+| **Viés de sobrevivência:** a base não tem ações canceladas. Faltam VALE5, LAME4, SULA11, CTIP3, HGTX3, JBSS3 etc. Só 19 dos 426 tickers param de negociar antes de 2026 (o primeiro em 2020), e em 2000 só 170 tickers têm preço | Backtest otimista, principalmente em Size e Momentum: empresas que quebraram ou foram compradas somem da amostra | Re-baixar com ativos cancelados (P11). Até lá, declarar a limitação no relatório |
+| `retorno_suspeito` só pega altas: um retorno abaixo de −100% não existe, então queda falsa (desdobramento não ajustado, cisão) nunca é marcada. Ex.: PCAR3 −66% em 01/03/2021, que é a cisão do Assaí | Conservador para o retorno da carteira, mas distorce Low Vol e Momentum da ação afetada | Das 11 quedas > 50% com volume > R\$ 5 mi desde 2010, a maioria é real (AMER3, AZUL3). Manter e conferir caso a caso se alguma cair na carteira |
+| Classes da mesma empresa têm o mesmo valor de mercado (PETR3 = PETR4, nos 24.855 casos) | A empresa contaria duas vezes no Size e na carteira | Resolvido no universo: uma classe por empresa, a mais líquida |
+| P/L é por classe, valor de mercado é da empresa. Em multi-classe, `lucro_12m_mil` não é o lucro contábil (3T2025: PETR3 dá R\$ 75 bi, PETR4 dá R\$ 81 bi) | Nenhum para o ranking: o L/P recalculado continua sendo o da classe | Não usar `lucro_12m_mil` como lucro contábil em empresas com mais de uma classe |
+
 ---
 
 ## 4. Decisões pendentes (discutir com o grupo)
 
 | # | Questão | Recomendação |
 |---|---|---|
-| P1 | **Universo:** não temos a composição histórica do Ibovespa | A cada rebalanceamento, usar as ~90 ações com maior volume financeiro médio nos últimos 3 meses e negociadas em ≥ 90% dos pregões. Imita os critérios do Ibovespa, sem viés de sobrevivência |
+| P1 | **Universo:** não temos a composição histórica do Ibovespa | A cada rebalanceamento, usar as ~90 ações com maior volume financeiro médio nos últimos 3 meses e negociadas em ≥ 90% dos pregões. Imita os critérios do Ibovespa. **Implementado** em `universo.py`, com uma classe por empresa (84 a 88 empresas). Calibrar N: em 2010-15 a 90ª ação negociava só R\$ 1-2 mi/dia |
 | P2 | **Financeiras sem Dív/PL** (35 tickers, ex.: ITUB4, BBDC4, BBAS3, BPAC11, BBSE3) | Nota neutra (mediana) no componente de dívida do Quality. ROE e L/P valem normalmente |
 | P3 | **Patrimônio líquido negativo** (Dív/PL < 0) | Pior nota em Quality ou excluir. Num ranking ingênuo de "menor dívida", essas empresas apareceriam como as melhores |
 | P4 | **P/L negativo** (prejuízo) | Ranquear por L/P (lucro ÷ preço). Prejuízo vira L/P negativo e vai para o fim da fila automaticamente |
@@ -137,10 +148,44 @@ Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente co
 | P7 | **Datas de rebalanceamento** | Último pregão de cada mês (agressivo) e de mar/jun/set/dez (defensivo) |
 | P8 | **"Small caps" dentro do Ibovespa** | As 30% menores do Ibovespa são, na prática, mid caps. Reconhecer essa limitação no relatório |
 | P9 | **Custos de transação** | Começar sem custo. Depois testar algo como 0,1% por operação para ver a sensibilidade, já que o bloco mensal gira bastante |
+| P10 | **Quando voltar a 65/35:** os blocos rebalanceiam em frequências diferentes e os pesos derivam | Voltar a 65/35 a cada rebalanceamento trimestral, quando os dois blocos rebalanceiam juntos |
+| P11 | **Viés de sobrevivência:** a base não tem ações canceladas | Re-baixar as 6 planilhas com ativos cancelados e rodar `limpeza.py` de novo. O resto do código não muda |
+
+P5, P6 e P7 já estão implementados como parâmetros (`dados.py` e `backtest.py`), com as recomendações acima.
 
 ---
 
-## 5. Estrutura do repositório
+## 5. Roadmap do backtest (Entrega 2)
+
+Cada etapa é um commit. O motor (etapas 1 a 3) não sabe nada dos fatores: a estratégia entra como uma função `selecionar(janela, data) -> lista de tickers`, e cada bloco roda no mesmo loop.
+
+| # | Etapa | Arquivo | O que faz | Status |
+|---|---|---|---|---|
+| 1 | Dados do backtest | `src/dados.py` | Bases em formato largo, P5 (suspeito → 0), Ibovespa e CDI com cache, `janela()` que recorta só o que era conhecido na data | ✅ |
+| 2 | Universo | `src/universo.py` | P1: 90 mais líquidas em 3 meses, ≥ 90% dos pregões, uma classe por empresa | ✅ |
+| 3 | Motor do loop | `src/backtest.py` | Datas (P6/P7), loop da Aula 2, buy-and-hold entre rebalanceamentos, teste de sanidade | ✅ |
+| 4 | Métricas e gráficos | `src/metricas.py` | Retorno acumulado, CAGR, volatilidade, Sharpe (CDI), max drawdown, alpha e beta. Gráfico acumulado vs Ibovespa e underwater | próximo |
+| 5 | Fatores | `src/fatores.py` | Nota de cada fator por data: Low Vol, Momentum 12-1, Size, Value (L/P com lucro já divulgado, P4), Quality (ROE + Dív/PL, P2/P3) | |
+| 6 | Bloco agressivo | `src/estrategia.py` | Size 30% → Momentum 30%, mensal | |
+| 7 | Bloco defensivo | `src/estrategia.py` | Quality + Low Vol 30% → Value 50%, trimestral | |
+| 8 | Carteira 65/35 | `src/estrategia.py` | Junta os dois blocos (P10) e compara com o Ibovespa | |
+| 9 | Robustez | — | Custos (P9), sensibilidade dos parâmetros, subperíodos | |
+| 10 | Material da Entrega 2 | `notebooks/` | Gráficos e tabela de métricas para a apresentação | |
+
+**Teste de sanidade do motor** (`python src/backtest.py`, rodada de 01/11/2026): peso igual em todo o universo, rebalanceado todo mês, de 03/01/2011 a 23/10/2026. Não é a estratégia: serve para validar dados e loop.
+
+| | Retorno acumulado | CAGR | Volatilidade |
+|---|---|---|---|
+| Universo peso igual | 209,5% | 7,5% | 22,8% |
+| Ibovespa | 195,9% | 7,2% | 23,1% |
+
+Correlação diária de 0,93 e beta de 0,91 com o Ibovespa, com 83 a 88 ações por carteira. Anda junto com o índice, então dados e loop estão coerentes.
+
+**Hipóteses do motor (v1):** sinal e operação no fechamento do mesmo pregão; sem custo de transação; dia sem negócio, ou ação que saiu da bolsa, conta como retorno zero até o próximo rebalanceamento.
+
+---
+
+## 6. Estrutura do repositório
 
 ```
 iqf-factor-strategy/
@@ -149,12 +194,15 @@ iqf-factor-strategy/
 ├── requirements.txt
 ├── data/
 │   ├── raw/             ← xlsx do Economatica (fora do Git: ver .gitignore)
-│   └── processed/       ← parquets limpos + relatorio_limpeza.md
+│   └── processed/       ← parquets limpos + relatorio_limpeza.md + benchmark_diario.parquet
 ├── src/
 │   ├── limpeza.py       ← feito
-│   ├── fatores.py       ← próximo: notas de cada fator por data
-│   ├── backtest.py      ← loop da Aula 2
-│   └── metricas.py      ← CAGR, Sharpe, drawdown, alpha/beta
+│   ├── dados.py         ← feito: bases no formato do backtest + Ibovespa/CDI
+│   ├── universo.py      ← feito: filtro de liquidez (P1)
+│   ├── backtest.py      ← feito: loop da Aula 2
+│   ├── metricas.py      ← próximo: CAGR, Sharpe, drawdown, alpha/beta
+│   ├── fatores.py       ← notas de cada fator por data
+│   └── estrategia.py    ← blocos defensivo e agressivo, carteira 65/35
 └── notebooks/           ← exploração e gráficos
 ```
 
@@ -162,7 +210,7 @@ iqf-factor-strategy/
 
 ---
 
-## 6. Cronograma
+## 7. Cronograma
 
 | Data | Entrega |
 |---|---|
@@ -172,7 +220,7 @@ iqf-factor-strategy/
 
 ---
 
-## 7. Registro de uso de IA generativa
+## 8. Registro de uso de IA generativa
 
 O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 4.7). Registrar aqui cada uso concreto: etapa, o que a IA fez, impacto.
 
@@ -181,3 +229,5 @@ O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 
 | 01/11/2026 | Coleta de dados | Claude | A partir dos slides, da Entrega 1 e da transcrição da aula, mapeou quais indicadores do Economatica medem cada fator e com quais parâmetros (ajuste por proventos, 12 meses, PL fim, frequência por base) | Reduziu as bases de 9 para 6 e evitou baixar dado diário desnecessário |
 | 01/11/2026 | Validação dos dados | Claude | Conferiu as 6 planilhas (tickers, datas, unidades, coerência dos valores) e identificou bancos sem Dív/PL, patrimônio negativo, P/L negativo e a defasagem dos balanços | Armadilhas de ranking documentadas antes do backtest |
 | 01/11/2026 | Limpeza | Claude | Escreveu o `limpeza.py`. Teste empírico mostrou que o P/L trimestral do Economatica usa lucro ainda não divulgado (look-ahead); propôs a correção via lucro implícito. Detectou erros de ajuste (ASAI3, GSHP3) | Mitigação de viés de look-ahead e de dados errados no backtest |
+| 01/11/2026 | Verificação da limpeza | Claude | Conferiu os parquets antes do backtest e encontrou viés de sobrevivência (sem ações canceladas), quedas falsas não marcadas (PCAR3) e valor de mercado repetido entre classes | Limitações documentadas; universo com uma classe por empresa |
+| 01/11/2026 | Backtest (etapas 1 a 3) | Claude | Propôs o roadmap em etapas e escreveu `dados.py`, `universo.py` e `backtest.py` (loop da Aula 2), com teste de sanidade contra o Ibovespa | Motor validado (correlação de 0,93 com o Ibovespa) antes de entrar a lógica dos fatores |
