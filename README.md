@@ -8,7 +8,10 @@ Carteira 65% defensiva (Quality + Low Vol → Value, rebalanceamento trimestral)
 pip install -r requirements.txt
 python src/limpeza.py        # data/raw/*.xlsx -> data/processed/*.parquet
 python src/backtest.py       # teste do motor: peso igual no universo x Ibovespa
+python src/estrategia.py     # estratégia 65/35: tabela de métricas x Ibovespa
 ```
+
+O resultado com os gráficos está em `notebooks/entrega2_backtest.ipynb` (abrir e dar *Run All*).
 
 Os xlsx brutos do Economatica não estão no Git. Peça a pasta `data/raw/` para o grupo (OneDrive).
 O Ibovespa e o CDI são baixados na primeira execução (precisa de internet) e ficam em `data/processed/benchmark_diario.parquet`.

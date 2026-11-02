@@ -4,3 +4,5 @@ openpyxl
 pyarrow
 yfinance
 matplotlib
+requests
+ipykernel
