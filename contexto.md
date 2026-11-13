@@ -3,7 +3,7 @@
 Este arquivo registra **o que decidimos e por quê**. Leia antes de mexer no código.
 Atualize sempre que uma decisão mudar (com data).
 
-_Última atualização: 01/11/2026_
+_Última atualização: 13/11/2026_
 
 ---
 
@@ -152,6 +152,7 @@ Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente co
 | P11 | **Viés de sobrevivência:** a base não tem ações canceladas | Re-baixar as 6 planilhas com ativos cancelados e rodar `limpeza.py` de novo. O resto do código não muda |
 | P12 | **Como somar as notas** ("para nenhuma dominar") | Ranking percentil (0 a 1) ou z-score cortado em ±3. **As duas opções estão implementadas** (`METODO_NOTA` em `estrategia.py`, padrão "rank") e comparadas no notebook. Escolher pelo argumento, não pelo backtest |
 | P13 | **A mesma ação pode estar nos dois blocos** (ex.: CURY3 e BRAP4 aparecem no defensivo e no agressivo) | Hoje é permitido: os blocos são independentes, como na Entrega 1. Na prática o peso da ação soma. Decidir se fica assim |
+| P14 | **Notas de Quality e Low Vol em conjuntos diferentes** (correção do monitor na Entrega 2, 13/11/2026) | **Corrigido.** Antes, o percentil de Quality era calculado só entre as empresas com PL positivo e o de Low Vol entre todo o universo; quem não tinha uma das notas só saía na soma. As duas notas "de 0 a 1" não estavam na mesma régua. Agora `elegiveis_defensivo()` (`estrategia.py`) define primeiro o conjunto elegível (ROE válido, Low Vol válido e, com `PL_NEGATIVO = "excluir"`, sem PL negativo) e as duas notas são calculadas sobre ele, nas 4 combinações de P3 × P12. Com "pior_nota", a empresa de PL negativo agora também precisa ter ROE para entrar. Efeito no padrão (rank/excluir): 4 de 64 trimestres com uma ação trocada, CAGR da carteira 11,33% → 11,33% |
 
 P5, P6, P7 e P10 (trimestral) já estão implementados como parâmetros, com as recomendações acima.
 
@@ -196,6 +197,15 @@ Correlação diária de 0,93 e beta de 0,91 com o Ibovespa, com 83 a 88 ações 
 | CDI | 9,9% | 0,2% | — | 0% |
 
 Carteiras: 11 a 13 ações no defensivo e 6 a 7 no agressivo. Nas 4 combinações de P3 × P12, o CAGR da carteira fica entre 11,0% e 11,8%. O z-score muda o defensivo em mais de 90% dos trimestres, mas o resultado quase não muda.
+
+**Depois da correção P14** (13/11/2026, notas no mesmo conjunto): o padrão rank/excluir não muda (CAGR 11,33%, Sharpe 0,17, max drawdown −47,1%). Nas 4 combinações, o CAGR da carteira passa a ficar entre 11,1% e 11,5%. O z-score continua mudando o defensivo em 94% dos trimestres em relação ao rank.
+
+| Combinação | CAGR carteira (antes → depois) | Sharpe carteira | Max DD carteira | CAGR defensivo | Sharpe defensivo | Max DD defensivo | Trimestres com o defensivo alterado |
+|---|---|---|---|---|---|---|---|
+| rank / excluir (padrão) | 11,33% → 11,33% | 0,17 → 0,17 | −47,1% → −47,1% | 14,49% → 14,49% | 0,31 → 0,31 | −36,1% → −36,1% | 4 de 64 |
+| rank / pior_nota | 11,00% → 11,12% | 0,15 → 0,16 | −47,1% → −47,1% | 14,00% → 14,18% | 0,29 → 0,30 | −36,1% → −36,1% | 13 de 64 |
+| zscore / excluir | 11,81% → 11,53% | 0,19 → 0,18 | −48,6% → −48,9% | 15,25% → 14,81% | 0,35 → 0,33 | −37,0% → −37,5% | 12 de 64 |
+| zscore / pior_nota | 11,68% → 11,52% | 0,18 → 0,18 | −48,6% → −48,9% | 15,06% → 14,80% | 0,34 → 0,33 | −37,0% → −37,5% | 12 de 64 |
 
 ---
 
@@ -249,3 +259,4 @@ O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 
 | 01/11/2026 | Backtest (etapas 1 a 3) | Claude | Propôs o roadmap em etapas e escreveu `dados.py`, `universo.py` e `backtest.py` (loop da Aula 2), com teste de sanidade contra o Ibovespa | Motor validado (correlação de 0,93 com o Ibovespa) antes de entrar a lógica dos fatores |
 | 02/11/2026 | Comparação com os handouts | Claude | Comparou nosso código com os handouts 2 e 3 e listou as decisões que não estão neles (liquidez sem INEG, uma classe por empresa, buy-and-hold, Ibovespa/CDI) | Lista do que o grupo precisa saber defender na apresentação |
 | 02/11/2026 | Estratégia e gráficos (etapas 4 a 9) | Claude | Escreveu `fatores.py`, `estrategia.py`, `metricas.py`, `graficos.py` e o notebook da Entrega 2. Implementou as duas opções de P3 e P12 para comparar. Encontrou e corrigiu o valor de mercado datado em fim de semana, que fazia o rebalanceamento usar o mês anterior | Primeira versão completa do backtest com os gráficos da Aula 2 |
+| 13/11/2026 | Correção da Entrega 2 | Claude | Aplicou duas correções do monitor: (1) notas de Quality e Low Vol calculadas sobre o mesmo conjunto elegível (`elegiveis_defensivo` em `estrategia.py`, P14); (2) docstring do `universo.py`, que afirmava não haver viés de sobrevivência. Rodou as 4 combinações de P3 × P12 antes e depois, conferiu que as duas notas cobrem o mesmo conjunto em todos os trimestres e levantou outros pontos para o grupo decidir (Dív/PL de outro balanço que o ROE, mediana de Dív/PL dada a não financeiras) | Ranking do bloco defensivo metodologicamente consistente. Padrão rank/excluir inalterado (CAGR 11,33%); as outras combinações variam até 0,3 p.p. |
