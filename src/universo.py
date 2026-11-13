@@ -3,8 +3,9 @@ universo.py — Quais ações podem entrar na carteira em cada rebalanceamento (
 
 Não temos a composição histórica do Ibovespa. Aproximamos pelos critérios do próprio índice:
 as N ações com maior volume financeiro médio nos últimos 3 meses, desde que tenham negociado
-em quase todos os pregões. Como só usa dado até a data do rebalanceamento e a base inclui
-ações canceladas, não há viés de sobrevivência.
+em quase todos os pregões. O filtro só usa dado até a data do rebalanceamento, então não
+introduz look-ahead. Ele NÃO corrige o viés de sobrevivência: isso depende de a base trazer
+as ações canceladas, e o export atual do Economatica não traz (ver contexto.md, seção 3 e P11).
 
 Uso (com src/ no path):
     from universo import universo_liquido
