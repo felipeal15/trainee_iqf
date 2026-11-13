@@ -8,6 +8,7 @@ introduz look-ahead. O viés de sobrevivência não depende deste filtro, e sim 
 13/11/2026 ela inclui as ações canceladas (P11), então empresas que quebraram, fecharam o
 capital ou foram compradas entram no universo enquanto negociavam.
 Uma classe por empresa, identificada pelas 4 letras do ticker ou pelo valor de mercado (P17).
+BDRs (recibos de empresas estrangeiras) ficam fora (P22).
 
 Uso (com src/ no path):
     from universo import universo_liquido
@@ -26,6 +27,7 @@ from dados import Dados
 N_ATIVOS = 90                               # ~ número de ativos do Ibovespa
 JANELA_LIQUIDEZ = pd.DateOffset(months=3)
 PRESENCA_MINIMA = 0.90                      # negociada em pelo menos 90% dos pregões da janela
+SUFIXOS_BDR = ("32", "33", "34", "35", "39")  # P22: BDRs ficam fora do universo
 
 
 def empresa(ticker: str) -> str:
@@ -54,12 +56,19 @@ def identificar_empresas(tickers: list[str], valor_mercado: pd.Series) -> pd.Ser
     return pd.Series({t: raiz(t) for t in tickers})
 
 
+def eh_bdr(ticker: str) -> bool:
+    """P22: BDR (recibo de ação de empresa estrangeira) tem código terminado em 32, 33, 34, 35
+    ou 39 (ex.: AURA33, JBSS32). Ação brasileira termina em 3 a 8 (classe) ou 11 (unit)."""
+    return ticker[4:] in SUFIXOS_BDR
+
+
 def _liquidez(janela: Dados, data_atual: pd.Timestamp) -> pd.Series:
     """Volume financeiro médio (R$ mil/dia) nos últimos 3 meses das ações negociadas em pelo
-    menos PRESENCA_MINIMA dos pregões. Dia sem negócio conta como volume zero."""
+    menos PRESENCA_MINIMA dos pregões, sem BDRs (P22). Dia sem negócio conta como volume zero."""
     vol = janela.volume.loc[janela.volume.index > data_atual - JANELA_LIQUIDEZ]
     volume_medio = vol.fillna(0).mean()
-    return volume_medio[vol.notna().mean() >= PRESENCA_MINIMA]
+    acoes_brasileiras = ~volume_medio.index.map(eh_bdr).astype(bool)
+    return volume_medio[(vol.notna().mean() >= PRESENCA_MINIMA) & acoes_brasileiras]
 
 
 def _uma_classe_por_empresa(volume_medio: pd.Series, janela: Dados) -> list[str]:

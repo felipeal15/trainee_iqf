@@ -66,6 +66,11 @@ class Dados:
         estratégia só recebe esse recorte, o que impede por construção o uso de dado do futuro.
         Fundamentos entram pela data em que foram divulgados (data_disponivel), não pela
         data do balanço.
+
+        P21: data_disponivel é o último dia de um mês, e data_atual é o último PREGÃO do mês.
+        A comparação é por MÊS: o balanço vale no rebalanceamento do mês em que se completam
+        os 3 meses. Comparando por dia, num mês que termina sem pregão (todo dezembro, por
+        exemplo), o balanço só entraria no trimestre seguinte.
         """
         inicio = data_atual - lookback
 
@@ -73,11 +78,12 @@ class Dados:
             return x.loc[(x.index > inicio) & (x.index <= data_atual)]
 
         disponivel = self.fundamentos["data_disponivel"]
+        ja_divulgado = disponivel.dt.to_period("M") <= data_atual.to_period("M")
         return Dados(
             retorno=corta(self.retorno),
             volume=corta(self.volume),
             valor_mercado=corta(self.valor_mercado),
-            fundamentos=self.fundamentos[(disponivel > inicio) & (disponivel <= data_atual)],
+            fundamentos=self.fundamentos[(disponivel > inicio) & ja_divulgado],
             ibov=corta(self.ibov),
             cdi=corta(self.cdi),
         )

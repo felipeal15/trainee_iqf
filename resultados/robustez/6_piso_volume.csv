@@ -1,10 +1,10 @@
 medida,Top 90 (padrão),Piso de R$ 1 mi/dia (real)
-carteira: CAGR,"11,06%","12,65%"
-carteira: Sharpe,"0,15","0,23"
-carteira: Max DD,"−43,7%","−44,4%"
-agressivo: CAGR,"7,82%","11,98%"
+carteira: CAGR,"10,98%","12,57%"
+carteira: Sharpe,"0,15","0,22"
+carteira: Max DD,"−45,3%","−46,0%"
+agressivo: CAGR,"7,77%","11,93%"
 agressivo: Sharpe,"0,04","0,20"
 agressivo: Max DD,"−55,7%","−57,3%"
-agressivo: giro médio/mês,47%,42%
-"volume mediano das escolhidas (R$ mi/dia, média das datas)","55,3","6,7"
-"idem, 2011-14","20,9","3,8"
+agressivo: giro médio/mês,46%,42%
+"volume mediano das escolhidas (R$ mi/dia, média das datas)","55,0","6,8"
+"idem, 2011-14","20,8","3,9"

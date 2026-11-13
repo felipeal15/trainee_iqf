@@ -151,8 +151,51 @@ def grade(dados: Dados, nome_freq: str, freqs: list[str]) -> pd.DataFrame:
             print(f"   janela {meses} meses, {nome_freq} {FREQ_NOME[f]}")
             with parametros((fatores, "JANELA_FATORES_PRECO", pregoes), (estrategia, nome_freq, f)):
                 m = metricas_carteira(rodar_estrategia(dados), dados)
-            linhas.append({"janela (meses)": meses, "rebalanceamento": FREQ_NOME[f], **m})
+                # Parâmetros efetivos da rodada: identificam a combinação (para tirar duplicatas)
+                efetivos = {"freq. agressivo": FREQ_NOME[estrategia.FREQ_AGRESSIVO],
+                            "freq. defensivo": FREQ_NOME[estrategia.FREQ_DEFENSIVO]}
+            linhas.append({"janela (meses)": meses, "rebalanceamento": FREQ_NOME[f], **efetivos, **m})
     return pd.DataFrame(linhas)
+
+
+def newey_west(y: pd.Series, X: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, int]:
+    """Coeficientes da regressão y = X b (MQO) e o t de cada um com erro-padrão de Newey-West
+    (pesos de Bartlett), que corrige autocorrelação e heterocedasticidade dos retornos diários.
+    Defasagens pela regra usual, fixada antes de olhar o resultado: piso(4 (n/100)^(2/9))."""
+    y, X = np.asarray(y, float), np.asarray(X, float)
+    n = len(y)
+    lags = int(np.floor(4 * (n / 100) ** (2 / 9)))
+    b = np.linalg.lstsq(X, y, rcond=None)[0]
+    Xu = X * (y - X @ b)[:, None]
+    S = Xu.T @ Xu
+    for lag in range(1, lags + 1):
+        G = Xu[lag:].T @ Xu[:-lag]
+        S += (1 - lag / (lags + 1)) * (G + G.T)
+    inv = np.linalg.inv(X.T @ X)
+    return b, b / np.sqrt(np.diag(inv @ S @ inv)), lags
+
+
+def significancia(series: pd.DataFrame, ibov: pd.Series, cdi: pd.Series, anos: float,
+                  m: pd.DataFrame) -> pd.DataFrame:
+    """Intervalo de 95% do Sharpe, t do alpha (Newey-West) e t do excesso sobre o Ibovespa."""
+    linhas = {}
+    for c in series.columns:
+        sr = m.at["Sharpe (CDI)", c]
+        ep = np.sqrt((1 + sr ** 2 / 2) / anos)  # erro-padrão aproximado do Sharpe anual
+        excesso = series[c] - cdi
+        b, t, lags = newey_west(excesso, pd.DataFrame({"alpha": 1.0, "beta": ibov - cdi}))
+        b2, t2, _ = newey_west(series[c] - ibov, pd.DataFrame({"const": np.ones(len(ibov))}))
+        linhas[c] = {"Sharpe (CDI)": num(sr), "intervalo de 95% do Sharpe": f"{num(sr - Z_95 * ep)} a {num(sr + Z_95 * ep)}",
+                     "alpha anual": pct(b[0] * 252, 2), "t do alpha (Newey-West)": num(t[0]),
+                     "excesso médio sobre o Ibovespa (a.a.)": pct(b2[0] * 252, 2),
+                     "t do excesso sobre o Ibovespa": num(t2[0]), "defasagens (NW)": f"{lags}"}
+    return pd.DataFrame(linhas).T.rename_axis("série")
+
+
+def sem_anos(series: pd.DataFrame, anos_fora: list[int], anos_total: float) -> pd.Series:
+    """CAGR de cada série tirando os anos civis de `anos_fora` (que são anos completos)."""
+    fica = series[~series.index.year.isin(anos_fora)]
+    return (1 + fica).prod() ** (1 / (anos_total - len(anos_fora))) - 1
 
 
 def grafico_grades(grades: dict[str, pd.DataFrame], padrao: dict[str, tuple[int, str]]) -> plt.Figure:
@@ -293,6 +336,15 @@ def main() -> None:
     for medida in ["CAGR", "Vol", "Max DD"]:
         rel += [f"## 3. Subperíodos: {medida}\n" if medida == "CAGR" else f"### {medida}\n",
                 md(t3[medida][[CART, DEF, AGR, "Ibovespa", "CDI"]]), "\n"]
+    # "Bate" só com diferença de pelo menos 0,1 p.p.; menos que isso é empate
+    sub_cagr = pd.DataFrame({k: {c: cagr(s.loc[a:b]) for c, s in series.assign(Ibovespa=ibov, CDI=cdi).items()}
+                             for k, (a, b) in SUBPERIODOS.items()}).T
+    placar = {}
+    for ref in ["Ibovespa", "CDI"]:
+        dif = sub_cagr[CART] - sub_cagr[ref]
+        placar[f"carteira x {ref}"] = (f"bate em {(dif >= 0.001).sum()}, empata em {(dif.abs() < 0.001).sum()}, "
+                                       f"perde em {(dif <= -0.001).sum()} de {len(dif)}")
+    rel += [md(pd.Series(placar, name="subperíodos (empate = diferença < 0,1 p.p.)").rename_axis("comparação").to_frame()), "\n"]
 
     # 4 ---------------------------------------------------------------------------------------
     print("4. Grades...")
@@ -304,10 +356,13 @@ def main() -> None:
     fig = grafico_grades(grades, {"Rebalanceamento do agressivo": (12, "mensal"),
                                   "Rebalanceamento do defensivo": (12, "trimestral")})
     fig.savefig(SAIDA / "4_grades.png", dpi=130, bbox_inches="tight"); plt.close(fig)
-    todas = pd.concat([g_agr, g_def]).drop_duplicates(["janela (meses)", "rebalanceamento", "Sharpe"])
+    # As linhas com a frequência padrão aparecem nas duas grades: duplicata pela combinação
+    # de parâmetros efetivos, não pelos rótulos
+    todas = pd.concat([g_agr, g_def]).drop_duplicates(["janela (meses)", "freq. agressivo", "freq. defensivo"])
     base_m = metricas_carteira(base, dados)
     resumo_grade = pd.Series({
-        "combinações": f"{len(todas)}", "Sharpe do padrão": num(base_m["Sharpe"]),
+        "combinações distintas": f"{len(todas)} (as {len(g_agr) + len(g_def) - len(todas)} do rebalanceamento padrão aparecem nas duas grades)",
+        "Sharpe do padrão": num(base_m["Sharpe"]),
         "Sharpe mínimo / mediano / máximo": f"{num(todas.Sharpe.min())} / {num(todas.Sharpe.median())} / {num(todas.Sharpe.max())}",
         "combinações com Sharpe > 0": f"{(todas.Sharpe > 0).sum()} de {len(todas)}",
         "CAGR mínimo / máximo": f"{pct(todas.CAGR.min(), 2)} / {pct(todas.CAGR.max(), 2)}",
@@ -317,7 +372,11 @@ def main() -> None:
     def fmt(g):
         return g.assign(Sharpe=g.Sharpe.map(num), CAGR=g.CAGR.map(lambda v: pct(v, 2)),
                         **{"Max DD": g["Max DD"].map(pct), "Vol": g.Vol.map(pct)}).set_index("janela (meses)")
-    rel += ["## 4. Grades de parâmetros\n", md(resumo_grade), "\n### Janela × rebalanceamento do agressivo\n",
+    rel += ["## 4. Grades de parâmetros\n",
+            "**Atenção:** todas as combinações usam os mesmos dados e o mesmo período. Elas mostram se o "
+            "resultado depende de um parâmetro específico, mas NÃO são evidências independentes: nove "
+            "Sharpes parecidos não valem como nove testes.\n",
+            md(resumo_grade), "\n### Janela × rebalanceamento do agressivo\n",
             md(fmt(g_agr)), "\n### Janela × rebalanceamento do defensivo\n", md(fmt(g_def)), "\n![](4_grades.png)\n"]
 
     # 5 ---------------------------------------------------------------------------------------
@@ -373,8 +432,18 @@ def main() -> None:
                      "anos que temos": num(anos, 1)}
     t7 = pd.DataFrame(linhas).T.rename_axis("série")
     t7.to_csv(SAIDA / "7_anos_de_dado.csv")
+    t7b = significancia(series, ibov, cdi, anos, m)
+    t7b.to_csv(SAIDA / "7_significancia.csv")
+    todas_series = series.assign(Ibovespa=ibov, CDI=cdi)
+    t7c = pd.DataFrame({"período todo": todas_series.apply(cagr),
+                        "sem 2017-19": sem_anos(todas_series, [2017, 2018, 2019], anos)}).T
+    t7c.to_csv(SAIDA / "7_sem_2017_19.csv")
     rel += ["## 7. Quantos anos de dado seriam necessários?\n",
-            f"Regra: t ≈ Sharpe × √anos; para 95% de confiança, anos ≥ ({num(Z_95)} / Sharpe)².\n", md(t7), "\n"]
+            f"Regra: t ≈ Sharpe × √anos; para 95% de confiança, anos ≥ ({num(Z_95)} / Sharpe)².\n", md(t7), "\n",
+            "### Intervalo do Sharpe e t do alpha\n",
+            "Erro-padrão do Sharpe ≈ √((1 + SR²/2) / anos). Alpha = intercepto da regressão do excesso "
+            "diário sobre o CDI contra o excesso do Ibovespa, anualizado (× 252). t com Newey-West.\n",
+            md(t7b), "\n### CAGR sem 2017-19\n", md(t7c.map(lambda v: pct(v, 2)).rename_axis("CAGR")), "\n"]
 
     (SAIDA / "resumo.md").write_text("\n".join(rel), encoding="utf-8")
     print(f"Pronto: {SAIDA}")
