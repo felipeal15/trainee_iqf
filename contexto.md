@@ -47,11 +47,9 @@ Fórmulas de referência:
 
 ## 2. Dados: o que foi baixado do Economatica
 
-Baixado em **01/11/2026** pelo Felipe (só funciona no Wi-Fi do Insper).
+Baixado em **01/11/2026** pelo Felipe (só funciona no Wi-Fi do Insper). **Baixado de novo em 13/11/2026, incluindo as ações canceladas** (P11).
 
-**Universo bruto:** Screening → Ações → "Básico: Ações negociadas na Bovespa" (475 tickers).
-
-⚠️ A ideia era incluir as ações canceladas para evitar viés de sobrevivência, mas **o export não as trouxe** (ver "Verificação da limpeza" na seção 3 e P11).
+**Universo bruto:** Screening → Ações → "Básico: Ações negociadas na Bovespa", **removendo o filtro "Ativo/Cancelado = ativo"** (1.420 tickers). O screening "Básico" vem com esse filtro ligado e traz só as ações ativas hoje: foi por isso que o primeiro download (475 tickers) não tinha as canceladas. Formato, colunas e datas iguais aos do primeiro download, e valores idênticos nos tickers e datas em comum.
 
 **Parâmetros comuns:** data inicial 01/01/2000, data final 23/10/2026, moeda original (R\$ nominal, **sem** ajuste por inflação), cabeçalho = código (ticker).
 
@@ -96,20 +94,22 @@ Roda com `python src/limpeza.py` e gera, em `data/processed/`, três bases no **
 
 ### Tratamentos aplicados
 
-| # | Tratamento | Motivo | Números (rodada de 01/11/2026) |
+| # | Tratamento | Motivo | Números (rodada de 13/11/2026, com canceladas; entre parênteses, a de 01/11) |
 |---|---|---|---|
 | 1 | Remove as 3 linhas de lixo do topo e extrai o ticker do cabeçalho multilinha | Formato do export do Economatica | — |
 | 2 | `"-"` → vazio (NaN) | É como o Economatica marca ausência de dado | — |
-| 3 | Remove tickers sem nenhum preço desde 2000 | Inúteis para o backtest | 49 removidos, **426 mantidos** |
+| 3 | Remove tickers sem nenhum preço desde 2000 | Inúteis para o backtest | 303 removidos, **1.117 mantidos** (49 e 426) |
 | 4 | Remove linhas inteiramente vazias da base diária | Feriados / dias sem pregão | 349 dias |
-| 5 | Remove preço com volume zero ou ausente | Não é negócio real. Ex.: ASAI3 tinha um "preço" em 26/02/2021, antes da estreia, que gerava um falso +386% | 154 linhas |
-| 6 | `retorno` = variação sobre o último preço disponível da mesma ação | Como o preço é ajustado, já é o retorno total (com dividendos) | — |
-| 7 | Marca `retorno_suspeito` quando o retorno diário passa de 100% (**não remove**) | Erros de ajuste no Economatica. Ex.: GSHP3 +13.900% em 27/03/2019, grupamento não ajustado | 249 casos, 43 com volume > R\$ 1 mi |
-| 8 | Valor de mercado: carrega o valor do mês anterior por até 2 meses (`preenchido = True`) | Ação sem negócio no último dia do mês | 2.945 valores |
+| 5 | Remove preço com volume zero ou ausente | Não é negócio real. Ex.: ASAI3 tinha um "preço" em 26/02/2021, antes da estreia, que gerava um falso +386% | 260 linhas (154) |
+| 6 | `retorno` = variação sobre o último preço disponível da mesma ação | Como o preço é ajustado, já é o retorno total (com dividendos) | 2.058.787 observações de preço (1.312.656) |
+| 7 | Marca `retorno_suspeito` quando o retorno diário passa de 100% (**não remove**) | Erros de ajuste no Economatica. Ex.: GSHP3 +13.900% em 27/03/2019, grupamento não ajustado; CTMI3 +106.553% em 2007 | 594 casos, 81 com volume > R\$ 1 mi (249 e 43) |
+| 8 | Valor de mercado: carrega o valor do mês anterior por até 2 meses (`preenchido = True`) | Ação sem negócio no último dia do mês | 8.411 valores (2.945) |
 | 9 | Descarta trimestres que ainda não terminaram | A linha 4T2026 do P/L é só o P/L de hoje | — |
 | 10 | `data_disponivel = fim do trimestre + 3 meses` | **Defasagem de divulgação** (prazos da CVM: ITR em 45 dias, DFP anual em 3 meses). Evita look-ahead bias | — |
 | 11 | `lucro_12m_mil` = valor de mercado no fim do trimestre ÷ P/L | Ver "Descoberta sobre o P/L" abaixo | — |
-| 12 | Flags `pl_negativo`, `patrimonio_negativo`, `provavel_financeira` | Armadilhas de ranking (ver pendências) | P/L < 0 em 18,3% das obs.; Dív/PL < 0 em 3.079 obs.; 35 financeiras |
+| 12 | Flags `pl_negativo`, `patrimonio_negativo`, `provavel_financeira` | Armadilhas de ranking (ver pendências) | P/L < 0 em 17,8% das obs.; Dív/PL < 0 em 6.597 obs.; 94 financeiras (18,3%, 3.079 e 35) |
+
+**Conferência das 94 prováveis financeiras (13/11/2026):** as 11 que chegam a entrar no universo líquido são todas bancos ou seguradoras (BBAS3, BBDC4, BBSE3, BIDI11/BIDI4, BPAC11, BPAN4, BRSR6, IRBR3, ITUB4, SANB11). Nove códigos antigos não puderam ser identificados pelo nome (BBCM4, BFIT3/4, BMCT4, BPIA3, BSGR3, CSMB3, DMFN3, SASG3, SLCP3), mas nenhum entra no universo: oito pararam de negociar antes de 2011 e o DMFN3 teve só 48 pregões. A classificação deles não afeta o backtest. Vale confirmar no Economatica se alguém tiver tempo.
 
 ### Descoberta sobre o P/L (importante para o backtest)
 Testamos de onde vem o lucro do P/L trimestral do Economatica comparando o lucro implícito (valor de mercado ÷ P/L) entre linhas. Nas empresas que já tinham divulgado o 3T2026, a linha "3T2026" já usa o lucro do 3T2026, que não era conhecido em 30/09. Ou seja, o teste indica que a linha do trimestre *q* usa o **lucro do próprio trimestre *q***, divulgado semanas ou meses depois. Vale confirmar com a mentoria. Usar o P/L "de 30/09" no rebalanceamento de 30/09 seria usar informação do futuro.
@@ -128,9 +128,9 @@ Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente co
 
 | Achado | Impacto | O que fazer |
 |---|---|---|
-| **Viés de sobrevivência:** a base não tem ações canceladas. Faltam VALE5, LAME4, SULA11, CTIP3, HGTX3, JBSS3 etc. Só 19 dos 426 tickers param de negociar antes de 2026 (o primeiro em 2020), e em 2000 só 170 tickers têm preço | Backtest otimista, principalmente em Size e Momentum: empresas que quebraram ou foram compradas somem da amostra | Re-baixar com ativos cancelados (P11). Até lá, declarar a limitação no relatório |
+| **Viés de sobrevivência:** a base não tem ações canceladas. Faltam VALE5, LAME4, SULA11, CTIP3, HGTX3, JBSS3 etc. Só 19 dos 426 tickers param de negociar antes de 2026 (o primeiro em 2020), e em 2000 só 170 tickers têm preço | Backtest otimista, principalmente em Size e Momentum: empresas que quebraram ou foram compradas somem da amostra | **Resolvido em 13/11/2026 (P11):** base baixada de novo com as canceladas. O efeito foi maior no defensivo do que no agressivo, em p.p. (ver P11) |
 | `retorno_suspeito` só pega altas: um retorno abaixo de −100% não existe, então queda falsa (desdobramento não ajustado, cisão) nunca é marcada. Ex.: PCAR3 −66% em 01/03/2021, que é a cisão do Assaí | Conservador para o retorno da carteira, mas distorce Low Vol e Momentum da ação afetada | Das 11 quedas > 50% com volume > R\$ 5 mi desde 2010, a maioria é real (AMER3, AZUL3). Manter e conferir caso a caso se alguma cair na carteira |
-| Classes da mesma empresa têm o mesmo valor de mercado (PETR3 = PETR4, nos 24.855 casos) | A empresa contaria duas vezes no Size e na carteira | Resolvido no universo: uma classe por empresa, a mais líquida |
+| Classes da mesma empresa têm o mesmo valor de mercado (PETR3 = PETR4, nos 24.855 casos) | A empresa contaria duas vezes no Size e na carteira | Resolvido no universo: uma classe por empresa, a mais líquida. Com as canceladas, a empresa passou a ser identificada também pelo valor de mercado (P17), por causa de trocas de código como AMBV4 → ABEV3 |
 | P/L é por classe, valor de mercado é da empresa. Em multi-classe, `lucro_12m_mil` não é o lucro contábil (3T2025: PETR3 dá R\$ 75 bi, PETR4 dá R\$ 81 bi) | Nenhum para o ranking: o L/P recalculado continua sendo o da classe | Não usar `lucro_12m_mil` como lucro contábil em empresas com mais de uma classe |
 
 ---
@@ -149,12 +149,13 @@ Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente co
 | P8 | **"Small caps" dentro do Ibovespa** | As 30% menores do Ibovespa são, na prática, mid caps. Reconhecer essa limitação no relatório |
 | P9 | **Custos de transação** | Começar sem custo. Depois testar algo como 0,1% por operação para ver a sensibilidade, já que o bloco mensal gira bastante. **Substituída pela P16** (custo proporcional ao giro, 13/11/2026) |
 | P10 | **Quando voltar a 65/35:** os blocos rebalanceiam em frequências diferentes e os pesos derivam | Voltar a 65/35 a cada rebalanceamento trimestral, quando os dois blocos rebalanceiam juntos |
-| P11 | **Viés de sobrevivência:** a base não tem ações canceladas | Re-baixar as 6 planilhas com ativos cancelados e rodar `limpeza.py` de novo. O resto do código não muda |
+| P11 | **Viés de sobrevivência:** a base não tem ações canceladas | **Resolvido em 13/11/2026.** As 6 planilhas foram baixadas de novo sem o filtro "Ativo/Cancelado = ativo" (1.420 tickers, 1.117 depois da limpeza) e o `limpeza.py` rodou sem mudança de código. Em 2011, 43% das empresas do universo líquido eram ações que a base antiga não tinha (24% em média no período). Efeito isolado (mesmo código, P17 desligada), CAGR da carteira com custo de 0,2%: **10,34% → 9,01%** (−1,33 p.p.); defensivo 13,95% → 12,49% (−1,46 p.p.); agressivo 2,03% → 1,22% (−0,81 p.p.). Tabela completa na seção 5. Parte das "canceladas" são códigos antigos de empresas que continuam vivas (VIVT4, CPLE6, VALE5, GETI4, AMBV4) e parte são empresas compradas ou fechadas (SULA11, ENBR3, CIEL3, HGTX3, LINX3). A base antiga perdia as duas coisas. **Limitação que continua:** ação que sai da bolsa fica com retorno zero até o próximo rebalanceamento (hipótese do motor), sem modelar o valor recebido numa OPA ou a perda numa falência sem negociação |
 | P12 | **Como somar as notas** ("para nenhuma dominar") | Ranking percentil (0 a 1) ou z-score cortado em ±3. **As duas opções estão implementadas** (`METODO_NOTA` em `estrategia.py`, padrão "rank") e comparadas no notebook. Escolher pelo argumento, não pelo backtest |
 | P13 | **A mesma ação pode estar nos dois blocos** (ex.: CURY3 e BRAP4 aparecem no defensivo e no agressivo) | Hoje é permitido: os blocos são independentes, como na Entrega 1. Na prática o peso da ação soma. Decidir se fica assim |
 | P14 | **Notas de Quality e Low Vol em conjuntos diferentes** (correção do monitor na Entrega 2, 13/11/2026) | **Corrigido.** Antes, o percentil de Quality era calculado só entre as empresas com PL positivo e o de Low Vol entre todo o universo; quem não tinha uma das notas só saía na soma. As duas notas "de 0 a 1" não estavam na mesma régua. Agora `elegiveis_defensivo()` (`estrategia.py`) define primeiro o conjunto elegível (ROE válido, Low Vol válido e, com `PL_NEGATIVO = "excluir"`, sem PL negativo) e as duas notas são calculadas sobre ele, nas 4 combinações de P3 × P12. Com "pior_nota", a empresa de PL negativo agora também precisa ter ROE para entrar. Efeito no padrão (rank/excluir): 4 de 64 trimestres com uma ação trocada, CAGR da carteira 11,33% → 11,33% |
 | P15 | **Quality com dados de um balanço só, e mediana de Dív/PL só para financeiras** (13/11/2026) | **Corrigido**, em duas partes. (1) `ultimo_balanco()` pegava o último valor não vazio de cada coluna, então o ROE podia vir de um trimestre e o Dív/PL de outro. Agora ROE e Dív/PL vêm do **mesmo balanço**: o mais recente já divulgado em que o ROE existe. Se o Dív/PL estiver vazio nele, fica vazio. **Exceção necessária:** o Economatica nunca calcula ROE com PL negativo (100% dos 2.541 casos com Dív/PL < 0). O balanço "com ROE" é, portanto, sempre de antes de o PL ficar negativo, e a P3 nunca seria acionada (ex.: BEEF3 em 2016 e AMER3 em 2023 voltariam ao ranking com o PL antigo). Por isso a situação do PL (`patrimonio_negativo`) vem do balanço mais recente com Dív/PL. O `lucro_12m_mil` do Value continua sendo o último lucro divulgado, buscado à parte: o L/P combina de propósito o lucro mais recente com o preço de hoje, e amarrá-lo ao balanço do ROE deixaria o lucro mais velho sem motivo (31 casos). (2) A mediana de Dív/PL (P2) agora vale só para `provavel_financeira`. Não financeira sem Dív/PL fica sem nota de Quality e fora de `elegiveis_defensivo`, que passou a exigir Dív/PL ou ser financeira, para manter as duas notas no mesmo conjunto (P14). Na base atual não há nenhum caso desses no universo (BRAP4 e TIMS3 já ficavam fora por não terem ROE), então a parte (2) não muda nenhum número: é uma proteção para quando a base mudar (P11). Efeito total no padrão: 1 de 64 trimestres alterado, CAGR da carteira 11,33% → 11,30%. **Ressalva:** `provavel_financeira` é calculada na limpeza com a base inteira ("nunca teve Dív/PL"), ou seja, olha o histórico todo do ticker. Funciona como classificação de setor, mas vale declarar |
 | P16 | **Custo de transação proporcional ao giro** (correção 3 do monitor, 13/11/2026) | **Implementado.** `CUSTO_OPERACAO = 0.002` (0,2% sobre o valor negociado, em cada compra e cada venda; exemplo da Aula 3), em `estrategia.py`. Em cada rebalanceamento de um bloco, giro = Σ \|peso novo − peso antigo\|, com o peso antigo **já andado com os preços** desde o rebalanceamento anterior (buy-and-hold). Ativo que sai tem peso novo 0 e ativo que entra tem peso antigo 0: trocar tudo dá giro 2, e a primeira montagem dá giro 1. Custo = giro × `CUSTO_OPERACAO`, pago no primeiro pregão depois do rebalanceamento: o retorno desse dia vira (1 + r)(1 − custo) − 1. A volta a 65/35 (P10) também paga: giro = Σ \|peso-alvo do bloco − peso antes\|, sem custo na primeira data, porque a montagem já está nos blocos. O custo fica no motor (`rodar_backtest(..., custo_operacao=)`, `calcular_giro`, `pesos_finais`, `descontar_custo` em `backtest.py`) e serve para qualquer `selecionar()`. Com custo 0, o resultado é idêntico bit a bit ao anterior (testado). **Simplificações:** custo igual para todas as ações (sem spread/impacto por liquidez); a volta a 65/35 é tratada à parte do giro interno dos blocos, então uma venda que as duas coisas pedem é contada duas vezes (efeito pequeno: 0,03% a.a.) |
+| P17 | **Empresa identificada pelo valor de mercado, não só pelas 4 letras** (13/11/2026) | **Corrigido.** Com as canceladas na base, AMBV4 e ABEV3 (Ambev, troca de código em 2013) entravam juntas no universo de 10/2011 a 10/2013 (25 meses), porque têm prefixos diferentes: a Ambev contava duas vezes. Como o Economatica dá o valor de mercado da EMPRESA, igual em todas as classes (AMBV4 = ABEV3 em 322 de 322 meses), `identificar_empresas()` em `universo.py` junta na mesma empresa os tickers com as mesmas 4 letras **ou** o mesmo valor de mercado na data, e continua ficando a classe mais líquida. Ticker sem valor de mercado fica só com o critério das letras. Na base nova, a Ambev é o único caso no universo; na base antiga, a regra não muda nada (testado). Efeito: defensivo alterado em 4 de 64 trimestres e agressivo em 2 de 190 meses; CAGR da carteira com custo de 0,2% 9,01% → 8,96% |
 
 P5, P6, P7 e P10 (trimestral) já estão implementados como parâmetros, com as recomendações acima.
 
@@ -177,14 +178,16 @@ Cada etapa é um commit. O motor (etapas 1 a 3) não sabe nada dos fatores: a es
 | 9 | Material da Entrega 2 | `notebooks/entrega2_backtest.ipynb` | Métricas, gráficos, carteiras e comparação das escolhas P3/P12 | ✅ |
 | 10 | Robustez | — | Custos (P16, feito), sensibilidade dos parâmetros, subperíodos | em andamento |
 
-**Teste de sanidade do motor** (`python src/backtest.py`, rodada de 01/11/2026): peso igual em todo o universo, rebalanceado todo mês, de 03/01/2011 a 23/10/2026. Não é a estratégia: serve para validar dados e loop.
+**Teste de sanidade do motor** (`python src/backtest.py`): peso igual em todo o universo, rebalanceado todo mês, de 03/01/2011 a 23/10/2026, sem custo. Não é a estratégia: serve para validar dados e loop.
 
-| | Retorno acumulado | CAGR | Volatilidade |
-|---|---|---|---|
-| Universo peso igual | 209,5% | 7,5% | 22,8% |
-| Ibovespa | 195,9% | 7,2% | 23,1% |
+| | Retorno acumulado | CAGR | Volatilidade | Correlação / beta com o Ibovespa |
+|---|---|---|---|---|
+| Universo peso igual, base antiga (01/11/2026) | 209,5% | 7,5% | 22,8% | 0,93 / 0,91 |
+| Universo peso igual, base com canceladas | 184,4% | 6,9% | 22,7% | 0,94 / 0,92 |
+| Universo peso igual, base com canceladas + P17 (atual) | 182,2% | 6,9% | 22,7% | 0,94 / 0,92 |
+| Ibovespa | 195,9% | 7,2% | 23,1% | — |
 
-Correlação diária de 0,93 e beta de 0,91 com o Ibovespa, com 83 a 88 ações por carteira. Anda junto com o índice, então dados e loop estão coerentes.
+83 a 88 ações por carteira. Anda junto com o índice, então dados e loop estão coerentes. Com as canceladas, o universo de peso igual passa a ficar um pouco **abaixo** do Ibovespa: só com as sobreviventes, ele ficava acima, um primeiro sinal do viés.
 
 **Hipóteses do motor (v1):** sinal e operação no fechamento do mesmo pregão; custo de transação proporcional ao giro (P16; o teste de sanidade roda sem custo); dia sem negócio, ou ação que saiu da bolsa, conta como retorno zero até o próximo rebalanceamento.
 
@@ -239,6 +242,25 @@ Giro e custo com 0,2%. Giro em peso = Σ \|peso novo − peso antigo\|. Médias 
 | Carteira 65/35 | — | — | — | — | 0,96 p.p. |
 
 **Nomes trocados × giro em peso:** os 23% e 30% de nomes trocados batem com a estimativa do monitor. Com peso igual, cada nome trocado gera uma venda e uma compra, então o giro em peso é cerca de **2 × a fração de nomes** (46% e 62%). Os ~5 p.p. restantes vêm de reequilibrar para peso igual as ações que ficam, que andaram com os preços. Com custo, o bloco agressivo rende 2,0% a.a., bem abaixo do CDI (9,9%): o custo agrava a fraqueza que ele já mostrava.
+
+**Base com ações canceladas (P11) e empresa pelo valor de mercado (P17)**, 13/11/2026, padrão rank/excluir. A partir daqui, o **resultado principal** é o da última linha de cada bloco: base nova + P17, custo de 0,2%.
+
+Efeito isolado do viés de sobrevivência (mesmo código, P17 desligada) e, separado, da P17. Formato: CAGR / Vol / Sharpe (CDI) / Max DD / Alpha.
+
+| Bloco | Custo | Base antiga (só sobreviventes) | Base com canceladas | Base com canceladas + P17 |
+|---|---|---|---|---|
+| Carteira 65/35 | 0% | 11,30% / 21,4% / 0,17 / −47,1% / 3,52% | 10,06% / 21,2% / 0,11 / −44,2% / 2,35% | 10,01% / 21,3% / 0,11 / −44,2% / 2,31% |
+| Carteira 65/35 | 0,2% | 10,34% / 21,4% / 0,13 / −47,1% / 2,64% | 9,01% / 21,2% / 0,07 / −44,2% / 1,38% | **8,96% / 21,3% / 0,06 / −44,2% / 1,34%** |
+| Defensivo | 0% | 14,45% / 19,4% / 0,31 / −36,1% / 5,93% | 13,00% / 19,4% / 0,24 / −37,8% / 4,66% | 12,81% / 19,5% / 0,23 / −37,8% / 4,49% |
+| Defensivo | 0,2% | 13,95% / 19,4% / 0,29 / −36,2% / 5,49% | 12,49% / 19,4% / 0,22 / −37,9% / 4,21% | **12,30% / 19,5% / 0,21 / −37,9% / 4,04%** |
+| Agressivo | 0% | 3,68% / 31,6% / −0,03 / −67,7% / −0,90% | 3,09% / 30,4% / −0,06 / −62,1% / −1,87% | 3,28% / 30,4% / −0,05 / −62,1% / −1,68% |
+| Agressivo | 0,2% | 2,03% / 31,6% / −0,08 / −67,7% / −2,53% | 1,22% / 30,4% / −0,12 / −64,1% / −3,73% | **1,41% / 30,4% / −0,12 / −64,1% / −3,54%** |
+
+**Por que o viés pesou mais no defensivo, em p.p.** (−1,46 p.p. contra −0,81 p.p. no agressivo, com custo):
+- Nas duas carteiras, cerca de um quarto do peso passa a ficar em ações que a base antiga não tinha (24% no defensivo, 22% no agressivo).
+- No defensivo, essas ações renderam bem menos do que as demais: +1,4% por trimestre, contra +4,2%. São empresas grandes e estáveis que pareciam boas em Quality/Low Vol e depois foram compradas, fecharam o capital ou trocaram de código depois de anos fracos (SULA11, VIVT4, ENBR3, CPLE6, CIEL3, GETI4). A base antiga trocava essas empresas pelas sobreviventes, que já sabemos que deram certo.
+- No agressivo, as canceladas não renderam menos do que as demais (+0,9% contra +0,5% ao mês, na média). O efeito vem de elas mudarem a composição do universo e dos cortes de Size, não de serem perdedoras. Em termos relativos, porém, o agressivo perde mais: 40% do próprio CAGR com custo (2,03% → 1,22%), contra 10% no defensivo.
+- A intuição da Entrega 2 ("o viés pesa mais em Size e Momentum") **não se confirmou** em p.p. Vale dizer isso na banca.
 
 ---
 
@@ -295,3 +317,5 @@ O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 
 | 13/11/2026 | Correção da Entrega 2 | Claude | Aplicou duas correções do monitor: (1) notas de Quality e Low Vol calculadas sobre o mesmo conjunto elegível (`elegiveis_defensivo` em `estrategia.py`, P14); (2) docstring do `universo.py`, que afirmava não haver viés de sobrevivência. Rodou as 4 combinações de P3 × P12 antes e depois, conferiu que as duas notas cobrem o mesmo conjunto em todos os trimestres e levantou outros pontos para o grupo decidir (Dív/PL de outro balanço que o ROE, mediana de Dív/PL dada a não financeiras) | Ranking do bloco defensivo metodologicamente consistente. Padrão rank/excluir inalterado (CAGR 11,33%); as outras combinações variam até 0,3 p.p. |
 | 13/11/2026 | Correção do Quality (P15) | Claude | Fez ROE e Dív/PL virem do mesmo balanço e restringiu a mediana de Dív/PL às financeiras. Ao validar, descobriu que o Economatica nunca calcula ROE com PL negativo, o que desligaria a P3 com a regra pedida; propôs e aplicou a exceção (situação do PL tirada do balanço mais recente). Separou o efeito de cada parte nas 4 combinações e justificou manter o lucro do Value independente | Quality calculado com dados coerentes de um balanço só, sem reabrir a P3. Padrão: CAGR 11,33% → 11,30%, 1 trimestre alterado |
 | 13/11/2026 | Custo de transação (P16) | Claude | Implementou no motor o custo proporcional ao giro (peso antigo já andado com os preços, montagem inicial e volta a 65/35 incluídas), testou que custo 0 reproduz o resultado anterior bit a bit, rodou a sensibilidade (0%, 0,1%, 0,2%, 0,5%) e decompôs o giro em troca de nomes e reequilíbrio para comparar com a estimativa do monitor | Resultado principal passa a incluir custos: CAGR da carteira 11,30% → 10,34% com 0,2%; o agressivo paga 1,6% a.a. de custo |
+| 13/11/2026 | Base com canceladas (P11) | Claude | Rodou a limpeza na base nova (1.117 tickers, 94 financeiras), conferiu as financeiras que entram no universo, guardou a base antiga e mediu o efeito isolado do viés de sobrevivência nas duas bases, com e sem custo, além do teste de sanidade. Decompôs a causa: peso e retorno das ações canceladas em cada bloco | Viés medido: −1,33 p.p. no CAGR da carteira com custo (10,34% → 9,01%), maior no defensivo em p.p. A hipótese de que pesaria mais em Size/Momentum não se confirmou |
+| 13/11/2026 | Identificação da empresa (P17) | Claude | Verificou que AMBV4 e ABEV3 têm o mesmo valor de mercado em todos os meses e que a Ambev é o único par desses no universo; implementou `identificar_empresas()` (4 letras ou mesmo valor de mercado) e testou que a base antiga não muda | Ambev deixa de contar duas vezes em 2011-13. CAGR da carteira com custo 9,01% → 8,96% |
