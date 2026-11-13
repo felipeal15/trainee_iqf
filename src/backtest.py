@@ -12,8 +12,12 @@ backtest.py — Loop do backtest da Aula 2 para uma carteira de peso igual.
 A lógica da estratégia entra como uma função selecionar(janela, data_atual) -> list[str].
 O mesmo loop serve para o bloco defensivo, para o agressivo e para testes.
 
-Hipóteses da primeira versão:
-    - Sinal e operação no fechamento do mesmo pregão (t), sem custo de transação (P9).
+Custo de transação (P16): em cada rebalanceamento, giro = soma de |peso novo - peso antigo|,
+com o peso antigo já andado com os preços desde o rebalanceamento anterior. O custo
+giro x custo_operacao é pago no primeiro pregão seguinte. custo_operacao = 0 desliga o custo.
+
+Hipóteses:
+    - Sinal e operação no fechamento do mesmo pregão (t).
     - Dia sem negócio, ou ação que saiu da bolsa, conta como retorno zero: a posição fica
       parada no último preço até o próximo rebalanceamento.
 
@@ -23,7 +27,7 @@ Uso (a partir da raiz do projeto):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
@@ -49,6 +53,9 @@ Selecionar = Callable[[Dados, pd.Timestamp], list[str]]
 class Resultado:
     retornos: pd.Series                       # retorno diário da carteira
     carteiras: dict[pd.Timestamp, list[str]]  # tickers escolhidos em cada rebalanceamento
+    # Por data de rebalanceamento: giro (0 a 2) e custo pago (fração do valor da carteira)
+    giro: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
+    custo: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
 
 
 # ---------------------------------------------------------------------------
@@ -78,23 +85,55 @@ def retornos_buy_and_hold(retornos: pd.DataFrame, pesos: pd.Series) -> pd.Series
     return valor.pct_change().fillna(valor.iloc[0] - 1)
 
 
+def pesos_finais(retornos: pd.DataFrame, pesos: pd.Series) -> pd.Series:
+    """Pesos no fim de um período buy-and-hold que começou com `pesos`: cada ativo andou com o
+    próprio retorno (quem subiu pesa mais). São os pesos "antigos" do rebalanceamento seguinte."""
+    r = retornos.reindex(columns=pesos.index).fillna(0.0)
+    valor = pesos * (1 + r).prod()
+    return valor / valor.sum()
+
+
+def calcular_giro(pesos_antigos: pd.Series, pesos_novos: pd.Series) -> float:
+    """Soma de |peso novo - peso antigo| em todos os ativos. Quem sai tem peso novo 0 e quem
+    entra tem peso antigo 0. Montar do zero dá 1 (só compras); trocar tudo dá 2."""
+    antigos, novos = pesos_antigos.align(pesos_novos, fill_value=0.0)
+    return float((novos - antigos).abs().sum())
+
+
+def descontar_custo(retornos: pd.Series, custo: float) -> pd.Series:
+    """Paga `custo` (fração do valor) no primeiro pregão do período: o retorno desse dia vira
+    (1 + r)(1 - custo) - 1 = r - custo(1 + r). Com custo 0, a série não muda."""
+    r = retornos.copy()
+    r.iloc[0] = r.iloc[0] - custo * (1 + r.iloc[0])
+    return r
+
+
 def rodar_backtest(dados: Dados, datas_rebal: pd.DatetimeIndex, selecionar: Selecionar,
                    lookback: pd.DateOffset = LOOKBACK,
-                   fim: pd.Timestamp | None = FIM) -> Resultado:
+                   fim: pd.Timestamp | None = FIM,
+                   custo_operacao: float = 0.0) -> Resultado:
+    """custo_operacao: fração cobrada sobre o valor negociado em cada compra e cada venda (P16)."""
     fim = dados.calendario.max() if fim is None else fim
     limites = list(datas_rebal) + [fim]
-    pedacos, carteiras = [], {}
+    pedacos, carteiras, giros = [], {}, {}
+    pesos_antes = pd.Series(dtype=float)  # começa sem nada: a primeira montagem só compra
     for data_atual, data_prox_rebal in zip(limites[:-1], limites[1:]):
         janela = dados.janela(data_atual, lookback)
         tickers = selecionar(janela, data_atual)
         if not tickers:
             raise ValueError(f"{data_atual:%d/%m/%Y}: a estratégia não selecionou nenhuma ação")
         carteiras[data_atual] = tickers
+        pesos = pd.Series(1 / len(tickers), index=tickers)
+        giros[data_atual] = calcular_giro(pesos_antes, pesos)
         # Compra no fechamento de data_atual: os retornos contam a partir do pregão seguinte
         dias = dados.calendario
         periodo = dados.retorno.loc[(dias > data_atual) & (dias <= data_prox_rebal)]
-        pedacos.append(retornos_buy_and_hold(periodo, pd.Series(1 / len(tickers), index=tickers)))
-    return Resultado(retornos=pd.concat(pedacos).rename("carteira"), carteiras=carteiras)
+        retornos = retornos_buy_and_hold(periodo, pesos)
+        pedacos.append(descontar_custo(retornos, giros[data_atual] * custo_operacao))
+        pesos_antes = pesos_finais(periodo, pesos)
+    giro = pd.Series(giros, name="giro")
+    return Resultado(retornos=pd.concat(pedacos).rename("carteira"), carteiras=carteiras,
+                     giro=giro, custo=(giro * custo_operacao).rename("custo"))
 
 
 # ---------------------------------------------------------------------------

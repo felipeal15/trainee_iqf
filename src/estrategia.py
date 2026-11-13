@@ -10,6 +10,8 @@ Bloco agressivo, rebalanceado todo mês:
     2. entre elas, as 30% com maior Momentum 12-1
 Peso igual dentro de cada bloco. A carteira volta para 65/35 a cada trimestre (P10) e,
 entre um trimestre e outro, os pesos dos blocos andam com o mercado.
+Custo de transação (P16): CUSTO_OPERACAO sobre o giro de cada rebalanceamento, dentro de cada
+bloco e na volta a 65/35 (ver backtest.py).
 
 Cada bloco é uma função selecionar(janela, data) -> tickers, que roda no loop de backtest.py.
 
@@ -24,7 +26,8 @@ from functools import partial
 
 import pandas as pd
 
-from backtest import Resultado, datas_rebalanceamento, rodar_backtest, retornos_buy_and_hold
+from backtest import (Resultado, calcular_giro, datas_rebalanceamento, descontar_custo,
+                      pesos_finais, retornos_buy_and_hold, rodar_backtest)
 from dados import Dados, carregar_dados
 from fatores import low_vol, lucro_preco, momentum, nota, quality, tamanho, ultimo_balanco
 from metricas import formatar, resumo
@@ -44,12 +47,18 @@ FATIA_MOMENTUM = 0.30        # agressivo, passo 2: as 30% com maior momentum ent
 METODO_NOTA = "rank"   # "rank" (percentil) ou "zscore"
 PL_NEGATIVO = "excluir"  # P3: "excluir" ou "pior_nota"
 
+# P16: custo sobre o valor negociado, em cada compra e cada venda (exemplo da Aula 3).
+# 0 = sem custo (a versão da Entrega 2).
+CUSTO_OPERACAO = 0.002
+
 
 @dataclass
 class ResultadoEstrategia:
-    carteira: pd.Series   # retorno diário da carteira 65/35
-    defensivo: Resultado  # retornos e carteiras de cada rebalanceamento do bloco defensivo
+    carteira: pd.Series   # retorno diário da carteira 65/35, já descontados os custos
+    defensivo: Resultado  # retornos, carteiras, giro e custo de cada rebalanceamento do bloco
     agressivo: Resultado  # idem, bloco agressivo
+    giro_entre_blocos: pd.Series   # giro da volta a 65/35 em cada trimestre (P10)
+    custo_entre_blocos: pd.Series  # custo dessa volta, em fração do valor da carteira
 
 
 def melhores(valores: pd.Series, fatia: float) -> list[str]:
@@ -100,28 +109,55 @@ def selecionar_agressivo(janela: Dados, data_atual: pd.Timestamp) -> list[str]:
 # ---------------------------------------------------------------------------
 # Carteira
 # ---------------------------------------------------------------------------
-def juntar_blocos(blocos: pd.DataFrame, pesos: pd.Series,
-                  datas_rebal: pd.DatetimeIndex) -> pd.Series:
+def juntar_blocos(blocos: pd.DataFrame, pesos: pd.Series, datas_rebal: pd.DatetimeIndex,
+                  custo_operacao: float = 0.0) -> tuple[pd.Series, pd.Series]:
     """Retorno diário da carteira que volta para `pesos` em cada data de `datas_rebal` e,
-    entre elas, deixa cada bloco andar com o próprio retorno."""
+    entre elas, deixa cada bloco andar com o próprio retorno (que já desconta o custo interno
+    do bloco). Voltar para `pesos` exige vender um bloco e comprar o outro: esse giro também
+    paga custo. Devolve os retornos e o giro de cada data."""
     dias = blocos.index
     limites = list(datas_rebal) + [dias.max()]
-    pedacos = [retornos_buy_and_hold(blocos.loc[(dias > inicio) & (dias <= fim)], pesos)
-               for inicio, fim in zip(limites[:-1], limites[1:])]
-    return pd.concat(pedacos).rename("carteira")
+    # Na primeira data os blocos já nascem nos pesos-alvo: o custo de montar está nos blocos
+    pesos_antes = pesos
+    pedacos, giros = [], {}
+    for inicio, fim in zip(limites[:-1], limites[1:]):
+        periodo = blocos.loc[(dias > inicio) & (dias <= fim)]
+        giros[inicio] = calcular_giro(pesos_antes, pesos)
+        retornos = retornos_buy_and_hold(periodo, pesos)
+        pedacos.append(descontar_custo(retornos, giros[inicio] * custo_operacao))
+        pesos_antes = pesos_finais(periodo, pesos)
+    return pd.concat(pedacos).rename("carteira"), pd.Series(giros, name="giro")
 
 
-def rodar_estrategia(dados: Dados, metodo: str = METODO_NOTA,
-                     pl_negativo: str = PL_NEGATIVO) -> ResultadoEstrategia:
+def rodar_estrategia(dados: Dados, metodo: str = METODO_NOTA, pl_negativo: str = PL_NEGATIVO,
+                     custo_operacao: float = CUSTO_OPERACAO) -> ResultadoEstrategia:
     trimestral = datas_rebalanceamento(dados.calendario, "Q")
     mensal = datas_rebalanceamento(dados.calendario, "M")
     defensivo = rodar_backtest(dados, trimestral,
-                               partial(selecionar_defensivo, metodo=metodo, pl_negativo=pl_negativo))
-    agressivo = rodar_backtest(dados, mensal, selecionar_agressivo)
+                               partial(selecionar_defensivo, metodo=metodo, pl_negativo=pl_negativo),
+                               custo_operacao=custo_operacao)
+    agressivo = rodar_backtest(dados, mensal, selecionar_agressivo, custo_operacao=custo_operacao)
     blocos = pd.DataFrame({"defensivo": defensivo.retornos, "agressivo": agressivo.retornos})
     pesos = pd.Series({"defensivo": PESO_DEFENSIVO, "agressivo": PESO_AGRESSIVO})
-    return ResultadoEstrategia(carteira=juntar_blocos(blocos, pesos, trimestral),
-                               defensivo=defensivo, agressivo=agressivo)
+    carteira, giro = juntar_blocos(blocos, pesos, trimestral, custo_operacao)
+    return ResultadoEstrategia(carteira=carteira, defensivo=defensivo, agressivo=agressivo,
+                               giro_entre_blocos=giro,
+                               custo_entre_blocos=(giro * custo_operacao).rename("custo"))
+
+
+def resumo_giro(res: ResultadoEstrategia) -> pd.DataFrame:
+    """Giro e custo de cada bloco e da volta a 65/35. Giro e custo anuais = soma no período
+    dividida pelo número de anos (custo em % do valor do próprio bloco)."""
+    anos = (res.carteira.index[-1] - res.carteira.index[0]).days / 365.25
+    linhas = {}
+    for nome, giro, custo in [("Bloco defensivo", res.defensivo.giro, res.defensivo.custo),
+                              ("Bloco agressivo", res.agressivo.giro, res.agressivo.custo),
+                              ("Volta a 65/35", res.giro_entre_blocos, res.custo_entre_blocos)]:
+        linhas[nome] = {"rebalanceamentos": len(giro),
+                        "giro médio": giro.iloc[1:].mean(),  # sem a montagem inicial
+                        "giro anual": giro.sum() / anos,
+                        "custo anual": custo.sum() / anos}
+    return pd.DataFrame(linhas).T
 
 
 def main() -> None:
@@ -135,8 +171,13 @@ def main() -> None:
         "Bloco agressivo": res.agressivo.retornos,
         "Ibovespa": dados.ibov.reindex(res.carteira.index),
     })
-    print(f"\nPeríodo: {retornos.index[0]:%d/%m/%Y} a {retornos.index[-1]:%d/%m/%Y}")
+    print(f"\nPeríodo: {retornos.index[0]:%d/%m/%Y} a {retornos.index[-1]:%d/%m/%Y}"
+          f" | custo por operação: {CUSTO_OPERACAO:.2%}")
     print(formatar(resumo(retornos, dados.cdi, benchmark="Ibovespa")).to_string())
+    print("\nGiro (soma de |peso novo - peso antigo|) e custo:")
+    print(resumo_giro(res).to_string(formatters={
+        "rebalanceamentos": "{:.0f}".format, "giro médio": "{:.0%}".format,
+        "giro anual": "{:.0%}".format, "custo anual": "{:.2%}".format}))
 
 
 if __name__ == "__main__":
