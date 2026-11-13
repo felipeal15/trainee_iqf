@@ -147,13 +147,14 @@ Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente co
 | P6 | **Início do backtest** | Jan/2011. Dados a partir de 2010 servem de histórico para Momentum/Low Vol de 12 meses, e o IFRS (contabilidade comparável) vale desde 2010. Pega a crise de 2015-16, a Covid e o ciclo de juros de 2021-22. Justificar no relatório (critério "escolha não oportunista de período") |
 | P7 | **Datas de rebalanceamento** | Último pregão de cada mês (agressivo) e de mar/jun/set/dez (defensivo) |
 | P8 | **"Small caps" dentro do Ibovespa** | As 30% menores do Ibovespa são, na prática, mid caps. Reconhecer essa limitação no relatório |
-| P9 | **Custos de transação** | Começar sem custo. Depois testar algo como 0,1% por operação para ver a sensibilidade, já que o bloco mensal gira bastante |
+| P9 | **Custos de transação** | Começar sem custo. Depois testar algo como 0,1% por operação para ver a sensibilidade, já que o bloco mensal gira bastante. **Substituída pela P16** (custo proporcional ao giro, 13/11/2026) |
 | P10 | **Quando voltar a 65/35:** os blocos rebalanceiam em frequências diferentes e os pesos derivam | Voltar a 65/35 a cada rebalanceamento trimestral, quando os dois blocos rebalanceiam juntos |
 | P11 | **Viés de sobrevivência:** a base não tem ações canceladas | Re-baixar as 6 planilhas com ativos cancelados e rodar `limpeza.py` de novo. O resto do código não muda |
 | P12 | **Como somar as notas** ("para nenhuma dominar") | Ranking percentil (0 a 1) ou z-score cortado em ±3. **As duas opções estão implementadas** (`METODO_NOTA` em `estrategia.py`, padrão "rank") e comparadas no notebook. Escolher pelo argumento, não pelo backtest |
 | P13 | **A mesma ação pode estar nos dois blocos** (ex.: CURY3 e BRAP4 aparecem no defensivo e no agressivo) | Hoje é permitido: os blocos são independentes, como na Entrega 1. Na prática o peso da ação soma. Decidir se fica assim |
 | P14 | **Notas de Quality e Low Vol em conjuntos diferentes** (correção do monitor na Entrega 2, 13/11/2026) | **Corrigido.** Antes, o percentil de Quality era calculado só entre as empresas com PL positivo e o de Low Vol entre todo o universo; quem não tinha uma das notas só saía na soma. As duas notas "de 0 a 1" não estavam na mesma régua. Agora `elegiveis_defensivo()` (`estrategia.py`) define primeiro o conjunto elegível (ROE válido, Low Vol válido e, com `PL_NEGATIVO = "excluir"`, sem PL negativo) e as duas notas são calculadas sobre ele, nas 4 combinações de P3 × P12. Com "pior_nota", a empresa de PL negativo agora também precisa ter ROE para entrar. Efeito no padrão (rank/excluir): 4 de 64 trimestres com uma ação trocada, CAGR da carteira 11,33% → 11,33% |
 | P15 | **Quality com dados de um balanço só, e mediana de Dív/PL só para financeiras** (13/11/2026) | **Corrigido**, em duas partes. (1) `ultimo_balanco()` pegava o último valor não vazio de cada coluna, então o ROE podia vir de um trimestre e o Dív/PL de outro. Agora ROE e Dív/PL vêm do **mesmo balanço**: o mais recente já divulgado em que o ROE existe. Se o Dív/PL estiver vazio nele, fica vazio. **Exceção necessária:** o Economatica nunca calcula ROE com PL negativo (100% dos 2.541 casos com Dív/PL < 0). O balanço "com ROE" é, portanto, sempre de antes de o PL ficar negativo, e a P3 nunca seria acionada (ex.: BEEF3 em 2016 e AMER3 em 2023 voltariam ao ranking com o PL antigo). Por isso a situação do PL (`patrimonio_negativo`) vem do balanço mais recente com Dív/PL. O `lucro_12m_mil` do Value continua sendo o último lucro divulgado, buscado à parte: o L/P combina de propósito o lucro mais recente com o preço de hoje, e amarrá-lo ao balanço do ROE deixaria o lucro mais velho sem motivo (31 casos). (2) A mediana de Dív/PL (P2) agora vale só para `provavel_financeira`. Não financeira sem Dív/PL fica sem nota de Quality e fora de `elegiveis_defensivo`, que passou a exigir Dív/PL ou ser financeira, para manter as duas notas no mesmo conjunto (P14). Na base atual não há nenhum caso desses no universo (BRAP4 e TIMS3 já ficavam fora por não terem ROE), então a parte (2) não muda nenhum número: é uma proteção para quando a base mudar (P11). Efeito total no padrão: 1 de 64 trimestres alterado, CAGR da carteira 11,33% → 11,30%. **Ressalva:** `provavel_financeira` é calculada na limpeza com a base inteira ("nunca teve Dív/PL"), ou seja, olha o histórico todo do ticker. Funciona como classificação de setor, mas vale declarar |
+| P16 | **Custo de transação proporcional ao giro** (correção 3 do monitor, 13/11/2026) | **Implementado.** `CUSTO_OPERACAO = 0.002` (0,2% sobre o valor negociado, em cada compra e cada venda; exemplo da Aula 3), em `estrategia.py`. Em cada rebalanceamento de um bloco, giro = Σ \|peso novo − peso antigo\|, com o peso antigo **já andado com os preços** desde o rebalanceamento anterior (buy-and-hold). Ativo que sai tem peso novo 0 e ativo que entra tem peso antigo 0: trocar tudo dá giro 2, e a primeira montagem dá giro 1. Custo = giro × `CUSTO_OPERACAO`, pago no primeiro pregão depois do rebalanceamento: o retorno desse dia vira (1 + r)(1 − custo) − 1. A volta a 65/35 (P10) também paga: giro = Σ \|peso-alvo do bloco − peso antes\|, sem custo na primeira data, porque a montagem já está nos blocos. O custo fica no motor (`rodar_backtest(..., custo_operacao=)`, `calcular_giro`, `pesos_finais`, `descontar_custo` em `backtest.py`) e serve para qualquer `selecionar()`. Com custo 0, o resultado é idêntico bit a bit ao anterior (testado). **Simplificações:** custo igual para todas as ações (sem spread/impacto por liquidez); a volta a 65/35 é tratada à parte do giro interno dos blocos, então uma venda que as duas coisas pedem é contada duas vezes (efeito pequeno: 0,03% a.a.) |
 
 P5, P6, P7 e P10 (trimestral) já estão implementados como parâmetros, com as recomendações acima.
 
@@ -174,7 +175,7 @@ Cada etapa é um commit. O motor (etapas 1 a 3) não sabe nada dos fatores: a es
 | 7 | Bloco defensivo | `src/estrategia.py` | Quality + Low Vol 30% → Value 50%, trimestral | ✅ |
 | 8 | Carteira 65/35 | `src/estrategia.py` | Junta os dois blocos voltando a 65/35 a cada trimestre (P10) | ✅ |
 | 9 | Material da Entrega 2 | `notebooks/entrega2_backtest.ipynb` | Métricas, gráficos, carteiras e comparação das escolhas P3/P12 | ✅ |
-| 10 | Robustez | — | Custos (P9), sensibilidade dos parâmetros, subperíodos | próximo |
+| 10 | Robustez | — | Custos (P16, feito), sensibilidade dos parâmetros, subperíodos | em andamento |
 
 **Teste de sanidade do motor** (`python src/backtest.py`, rodada de 01/11/2026): peso igual em todo o universo, rebalanceado todo mês, de 03/01/2011 a 23/10/2026. Não é a estratégia: serve para validar dados e loop.
 
@@ -185,7 +186,7 @@ Cada etapa é um commit. O motor (etapas 1 a 3) não sabe nada dos fatores: a es
 
 Correlação diária de 0,93 e beta de 0,91 com o Ibovespa, com 83 a 88 ações por carteira. Anda junto com o índice, então dados e loop estão coerentes.
 
-**Hipóteses do motor (v1):** sinal e operação no fechamento do mesmo pregão; sem custo de transação; dia sem negócio, ou ação que saiu da bolsa, conta como retorno zero até o próximo rebalanceamento.
+**Hipóteses do motor (v1):** sinal e operação no fechamento do mesmo pregão; custo de transação proporcional ao giro (P16; o teste de sanidade roda sem custo); dia sem negócio, ou ação que saiu da bolsa, conta como retorno zero até o próximo rebalanceamento.
 
 **Primeira rodada da estratégia** (02/11/2026, padrão rank / excluir, sem custos; ainda sem análise):
 
@@ -218,6 +219,26 @@ Carteiras: 11 a 13 ações no defensivo e 6 a 7 no agressivo. Nas 4 combinaçõe
 | zscore / pior_nota | 11,52% → 11,43% | 0,18 → 0,17 | −48,9% → −48,9% | 14,80% → 14,66% | 0,33 → 0,32 | −37,5% → −37,5% | 1 de 64 |
 
 Se a regra "último balanço com ROE" fosse aplicada também à situação do PL (sem a exceção da P15), o padrão cairia para 11,00%, com 4 trimestres alterados. Três dessas trocas viriam de empresas com PL negativo (BEEF3, AMER3) voltando ao ranking com dados antigos.
+
+**Custo de transação (P16, 13/11/2026)**, padrão rank/excluir, de 03/01/2011 a 23/10/2026. O custo de 0% reproduz exatamente o resultado anterior. A partir daqui, o resultado principal é o de **0,2%**.
+
+| Custo por operação | Carteira: CAGR / Vol / Sharpe / Max DD / Alpha | Defensivo: CAGR / Vol / Sharpe / Max DD / Alpha | Agressivo: CAGR / Vol / Sharpe / Max DD / Alpha |
+|---|---|---|---|
+| 0% (referência) | 11,30% / 21,4% / 0,17 / −47,1% / 3,52% | 14,45% / 19,4% / 0,31 / −36,1% / 5,93% | 3,68% / 31,6% / −0,03 / −67,7% / −0,90% |
+| 0,1% | 10,82% / 21,4% / 0,15 / −47,1% / 3,08% | 14,20% / 19,4% / 0,30 / −36,1% / 5,71% | 2,85% / 31,6% / −0,05 / −67,7% / −1,72% |
+| **0,2% (principal)** | **10,34% / 21,4% / 0,13 / −47,1% / 2,64%** | **13,95% / 19,4% / 0,29 / −36,2% / 5,49%** | **2,03% / 31,6% / −0,08 / −67,7% / −2,53%** |
+| 0,5% | 8,90% / 21,4% / 0,06 / −47,1% / 1,31% | 13,21% / 19,4% / 0,25 / −36,3% / 4,83% | −0,40% / 31,6% / −0,16 / −67,8% / −4,97% |
+
+Giro e custo com 0,2%. Giro em peso = Σ \|peso novo − peso antigo\|. Médias sem a montagem inicial; giro e custo anuais = soma no período ÷ anos.
+
+| | Nomes trocados por rebal. | Giro médio por rebal. | Giro anual | Custo anual (% do bloco) | Perda de CAGR (0% → 0,2%) |
+|---|---|---|---|---|---|
+| Defensivo (trimestral) | 23% | 53% | 216% | 0,43% | 0,49 p.p. |
+| Agressivo (mensal) | 30% | 66% | 801% | 1,60% | 1,65 p.p. |
+| Volta a 65/35 (trimestral) | — | 4% | 17% | 0,03% | — |
+| Carteira 65/35 | — | — | — | — | 0,96 p.p. |
+
+**Nomes trocados × giro em peso:** os 23% e 30% de nomes trocados batem com a estimativa do monitor. Com peso igual, cada nome trocado gera uma venda e uma compra, então o giro em peso é cerca de **2 × a fração de nomes** (46% e 62%). Os ~5 p.p. restantes vêm de reequilibrar para peso igual as ações que ficam, que andaram com os preços. Com custo, o bloco agressivo rende 2,0% a.a., bem abaixo do CDI (9,9%): o custo agrava a fraqueza que ele já mostrava.
 
 ---
 
@@ -273,3 +294,4 @@ O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 
 | 02/11/2026 | Estratégia e gráficos (etapas 4 a 9) | Claude | Escreveu `fatores.py`, `estrategia.py`, `metricas.py`, `graficos.py` e o notebook da Entrega 2. Implementou as duas opções de P3 e P12 para comparar. Encontrou e corrigiu o valor de mercado datado em fim de semana, que fazia o rebalanceamento usar o mês anterior | Primeira versão completa do backtest com os gráficos da Aula 2 |
 | 13/11/2026 | Correção da Entrega 2 | Claude | Aplicou duas correções do monitor: (1) notas de Quality e Low Vol calculadas sobre o mesmo conjunto elegível (`elegiveis_defensivo` em `estrategia.py`, P14); (2) docstring do `universo.py`, que afirmava não haver viés de sobrevivência. Rodou as 4 combinações de P3 × P12 antes e depois, conferiu que as duas notas cobrem o mesmo conjunto em todos os trimestres e levantou outros pontos para o grupo decidir (Dív/PL de outro balanço que o ROE, mediana de Dív/PL dada a não financeiras) | Ranking do bloco defensivo metodologicamente consistente. Padrão rank/excluir inalterado (CAGR 11,33%); as outras combinações variam até 0,3 p.p. |
 | 13/11/2026 | Correção do Quality (P15) | Claude | Fez ROE e Dív/PL virem do mesmo balanço e restringiu a mediana de Dív/PL às financeiras. Ao validar, descobriu que o Economatica nunca calcula ROE com PL negativo, o que desligaria a P3 com a regra pedida; propôs e aplicou a exceção (situação do PL tirada do balanço mais recente). Separou o efeito de cada parte nas 4 combinações e justificou manter o lucro do Value independente | Quality calculado com dados coerentes de um balanço só, sem reabrir a P3. Padrão: CAGR 11,33% → 11,30%, 1 trimestre alterado |
+| 13/11/2026 | Custo de transação (P16) | Claude | Implementou no motor o custo proporcional ao giro (peso antigo já andado com os preços, montagem inicial e volta a 65/35 incluídas), testou que custo 0 reproduz o resultado anterior bit a bit, rodou a sensibilidade (0%, 0,1%, 0,2%, 0,5%) e decompôs o giro em troca de nomes e reequilíbrio para comparar com a estimativa do monitor | Resultado principal passa a incluir custos: CAGR da carteira 11,30% → 10,34% com 0,2%; o agressivo paga 1,6% a.a. de custo |
