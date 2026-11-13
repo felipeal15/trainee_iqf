@@ -262,6 +262,36 @@ Efeito isolado do viés de sobrevivência (mesmo código, P17 desligada) e, sepa
 - No agressivo, as canceladas não renderam menos do que as demais (+0,9% contra +0,5% ao mês, na média). O efeito vem de elas mudarem a composição do universo e dos cortes de Size, não de serem perdedoras. Em termos relativos, porém, o agressivo perde mais: 40% do próprio CAGR com custo (2,03% → 1,22%), contra 10% no defensivo.
 - A intuição da Entrega 2 ("o viés pesa mais em Size e Momentum") **não se confirmou** em p.p. Vale dizer isso na banca.
 
+**Diagnóstico do bloco agressivo** (correção 2 do monitor, 13/11/2026). Gerado por `python src/diagnostico.py`, que grava tabelas, gráficos e `resumo.md` em `resultados/diagnostico/`. Só descreve: não muda a estratégia nem escolhe parâmetros. Mesmo universo, custo de 0,2% e rebalanceamento mensal em todas as variantes. A variante "bloco agressivo" reproduz exatamente o bloco da estratégia (conferido no script).
+
+| Variante (custo 0,2%) | Ações | Giro/mês | CAGR | Vol | Sharpe | Max DD |
+|---|---|---|---|---|---|---|
+| Universo peso igual | 86 | 13% | 6,45% | 22,7% | −0,03 | −49,0% |
+| Só Size (30% menores) | 25 | 33% | **−1,91%** | 29,1% | −0,25 | −72,3% |
+| Só Momentum (30% maiores) | 25 | 47% | **11,13%** | 22,8% | 0,16 | −52,4% |
+| Bloco agressivo (Size → Momentum) | 7 | 76% | 1,41% | 30,4% | −0,12 | −64,1% |
+| Ibovespa / CDI | — | — | 7,11% / 9,93% | 23,1% / 0,2% | 0,00 / — | −47,7% / 0% |
+
+Hipóteses testadas:
+
+| Hipótese | Veredito | Número |
+|---|---|---|
+| O fator Size falha no nosso universo | **Confirmada** | Só Size: −1,91% a.a. com custo (−1,12% sem), 8,4 p.p. abaixo do universo peso igual |
+| O fator Momentum falha | **Refutada** | Só Momentum: 11,13% a.a. com custo, acima do CDI e do Ibovespa |
+| A combinação piora o que funcionava sozinho | **Confirmada** | Momentum sozinho 11,13% → Momentum dentro das 30% menores 1,41% |
+| O resultado ruim vem de poucas ações | **Refutada** | 121 ações passaram pelo bloco e 52 contribuíram negativamente; as 5 piores somam 31% das perdas, as 15 piores 67% |
+| Ações que quebraram ou saíram da bolsa explicam as perdas | **Refutada** | Só 3 das 15 piores pararam de negociar; as maiores perdas são de empresas ativas (CASH3, GFSA3, SEER3, RAPT4) |
+| "Small" no nosso universo é mid cap (monitor: mediana ~R\$ 3,5 bi, até ~R\$ 10 bi) | **Confirmada com ajuste** | Mediana das 30% menores de R\$ 2,9–3,9 bi em 2011-16 e R\$ 5,4–7,6 bi a partir de 2017; corte de R\$ 4,7–12,2 bi (~R\$ 9–10 bi em 2019-26). Valores nominais |
+| A concentração (7 ações) aumenta o risco | **Confirmada** para risco específico; **refutada** para a vol total | 34% da variância diária não é explicada pelo universo (Só Size: 9,5%); mas a vol (30,3%) é quase a do Só Size com 25 ações (29,0%) |
+| Momentum crash explica as quedas | **Refutada** para o bloco | O fenômeno existe no universo (Momentum − Perdedoras: −3,2% ao mês nos 38 meses de rebote, +2,0% nos demais), mas nenhum dos 10 piores meses do bloco foi de rebote: as quedas são de mercado em queda, amplificadas (03/2020: −41,5% contra −29,9% do Ibovespa) |
+| O custo explica boa parte do resultado ruim | **Confirmada em parte** | −1,87 p.p. de CAGR; 22% da distância até o CDI e 31% da distância até o universo peso igual |
+| O agressivo diversifica a carteira | **Refutada** | Correlação de 0,67 com o defensivo (0,83 em 2020); caiu mais do que o defensivo nas 5 piores quedas da carteira; a vol da carteira supera a do defensivo sozinho em 4 de 6 subperíodos |
+| Small caps sofrem mais com juros altos | **Inconclusiva** | Só Size −24,0% a.a. em 2021-22 e −37,5% em 2024 (universo: −13,8% e −21,5%), mas é um ciclo só e 2015-16 é ambíguo |
+
+Causas, em ordem de importância: (1) o prêmio de Size foi negativo no período e no universo (as "pequenas" são mid caps); (2) o funil sequencial restringe o Momentum, que funcionava, ao pior pedaço do universo; (3) a concentração em 7 ações gera giro de 76% ao mês (custo de 1,8% a.a.) e 34% de risco específico. Momentum crash e ações canceladas não explicam o resultado.
+
+**Cuidado com overfitting:** o resultado do "Só Momentum" já foi visto. Qualquer mudança no bloco tem de ser justificada pela lógica e pela literatura, não por esta tabela, e o paper precisa dizer que este diagnóstico foi feito antes da mudança.
+
 ---
 
 ## 6. Estrutura do repositório
@@ -282,7 +312,8 @@ iqf-factor-strategy/
 │   ├── fatores.py       ← feito: métrica e nota de cada fator por data
 │   ├── estrategia.py    ← feito: blocos defensivo e agressivo, carteira 65/35
 │   ├── metricas.py      ← feito: CAGR, Sharpe, drawdown, alpha/beta
-│   └── graficos.py      ← feito: gráficos da Aula 2
+│   ├── graficos.py      ← feito: gráficos da Aula 2
+│   └── diagnostico.py   ← diagnóstico do bloco agressivo (gera resultados/diagnostico/)
 └── notebooks/
     └── entrega2_backtest.ipynb  ← resultado da Entrega 2 (métricas e gráficos)
 ```
@@ -319,3 +350,4 @@ O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 
 | 13/11/2026 | Custo de transação (P16) | Claude | Implementou no motor o custo proporcional ao giro (peso antigo já andado com os preços, montagem inicial e volta a 65/35 incluídas), testou que custo 0 reproduz o resultado anterior bit a bit, rodou a sensibilidade (0%, 0,1%, 0,2%, 0,5%) e decompôs o giro em troca de nomes e reequilíbrio para comparar com a estimativa do monitor | Resultado principal passa a incluir custos: CAGR da carteira 11,30% → 10,34% com 0,2%; o agressivo paga 1,6% a.a. de custo |
 | 13/11/2026 | Base com canceladas (P11) | Claude | Rodou a limpeza na base nova (1.117 tickers, 94 financeiras), conferiu as financeiras que entram no universo, guardou a base antiga e mediu o efeito isolado do viés de sobrevivência nas duas bases, com e sem custo, além do teste de sanidade. Decompôs a causa: peso e retorno das ações canceladas em cada bloco | Viés medido: −1,33 p.p. no CAGR da carteira com custo (10,34% → 9,01%), maior no defensivo em p.p. A hipótese de que pesaria mais em Size/Momentum não se confirmou |
 | 13/11/2026 | Identificação da empresa (P17) | Claude | Verificou que AMBV4 e ABEV3 têm o mesmo valor de mercado em todos os meses e que a Ambev é o único par desses no universo; implementou `identificar_empresas()` (4 letras ou mesmo valor de mercado) e testou que a base antiga não muda | Ambev deixa de contar duas vezes em 2011-13. CAGR da carteira com custo 9,01% → 8,96% |
+| 13/11/2026 | Diagnóstico do bloco agressivo | Claude | Escreveu `diagnostico.py` (contribuição por ação, Size e Momentum separados no mesmo universo, tamanho em R\$ bi, concentração, subperíodos, momentum crash com estado definido antes de olhar o resultado, custo, papel na carteira) e classificou 11 hipóteses em confirmada/refutada/inconclusiva, sem mudar a estratégia | Causa principal identificada: o Size falha (−1,9% a.a.) e o funil sequencial leva o Momentum (11,1% sozinho) para o pior pedaço do universo. Base para a mudança lógica do bloco, a justificar pela literatura |
