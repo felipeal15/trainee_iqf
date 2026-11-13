@@ -63,8 +63,9 @@ def melhores(valores: pd.Series, fatia: float) -> list[str]:
 # Blocos
 # ---------------------------------------------------------------------------
 def elegiveis_defensivo(janela: Dados, tickers: list[str], pl_negativo: str) -> list[str]:
-    """Empresas que entram no ranking de Quality + Low Vol: têm ROE, têm Low Vol (12 meses de
-    histórico) e, com pl_negativo='excluir', não têm patrimônio líquido negativo (P3).
+    """Empresas que entram no ranking de Quality + Low Vol: têm ROE, têm Dív/PL no mesmo balanço
+    (ou são financeiras, que não têm o indicador: P2), têm Low Vol (12 meses de histórico) e,
+    com pl_negativo='excluir', não têm patrimônio líquido negativo (P3).
 
     As duas notas são calculadas sobre ESTE conjunto. Se cada nota usasse um grupo diferente,
     um percentil de 0,8 em Quality e um de 0,8 em Low Vol não significariam a mesma coisa,
@@ -72,9 +73,10 @@ def elegiveis_defensivo(janela: Dados, tickers: list[str], pl_negativo: str) -> 
     if pl_negativo not in ("excluir", "pior_nota"):
         raise ValueError(f"tratamento de PL negativo desconhecido: {pl_negativo}")
     balanco = ultimo_balanco(janela, tickers)
-    elegivel = balanco["roe"].notna() & low_vol(janela, tickers).notna()
+    tem_div_pl = balanco["div_pl"].notna() | balanco["provavel_financeira"]
+    elegivel = balanco["roe"].notna() & tem_div_pl & low_vol(janela, tickers).notna()
     if pl_negativo == "excluir":
-        elegivel &= ~(balanco["div_pl"] < 0)
+        elegivel &= ~balanco["patrimonio_negativo"]
     return list(elegivel[elegivel].index)
 
 

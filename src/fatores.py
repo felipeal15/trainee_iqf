@@ -63,12 +63,34 @@ def tamanho(janela: Dados, tickers: list[str]) -> pd.Series:
     return janela.valor_mercado.reindex(columns=tickers).iloc[-1]
 
 
+def _ultima_linha_com(f: pd.DataFrame, coluna: str) -> pd.DataFrame:
+    """A linha inteira do balanço mais recente de cada ticker em que `coluna` existe.
+    (groupby().last() não serve: ele pula NaN coluna por coluna e mistura trimestres.)"""
+    return (f.dropna(subset=[coluna]).sort_values("data_referencia")
+            .drop_duplicates("ticker", keep="last").set_index("ticker"))
+
+
 def ultimo_balanco(janela: Dados, tickers: list[str]) -> pd.DataFrame:
-    """Último dado já divulgado de cada ticker (ROE, Dív/PL, lucro 12m).
-    Cada coluna pega o último valor não vazio dela."""
+    """Último dado já divulgado de cada ticker.
+
+    roe e div_pl vêm do MESMO balanço: o mais recente em que o ROE existe. Se o Dív/PL estiver
+    vazio nesse balanço, fica vazio (não é buscado em outro trimestre). As duas métricas do
+    Quality descrevem a empresa na mesma data.
+    patrimonio_negativo (P3) vem do balanço mais recente com Dív/PL, mesmo sem ROE: o
+    Economatica não calcula ROE com PL negativo, então o balanço "com ROE" é sempre de antes
+    de o PL ficar negativo e esconderia essa informação.
+    lucro_12m_mil é o último lucro divulgado, buscado à parte: o Value (L/P) combina o lucro
+    mais recente conhecido com o valor de mercado de hoje e não depende do ROE.
+    provavel_financeira (banco/seguradora, P2) é fixa por ticker."""
     f = janela.fundamentos[janela.fundamentos["ticker"].isin(tickers)]
-    colunas = ["roe", "div_pl", "lucro_12m_mil"]
-    return f.sort_values("data_referencia").groupby("ticker")[colunas].last().reindex(tickers)
+    quality = _ultima_linha_com(f, "roe")[["roe", "div_pl"]]
+    lucro = _ultima_linha_com(f, "lucro_12m_mil")["lucro_12m_mil"]
+    balanco = quality.join(lucro, how="outer").reindex(tickers)
+    patrimonio_negativo = _ultima_linha_com(f, "div_pl")["patrimonio_negativo"]
+    balanco["patrimonio_negativo"] = patrimonio_negativo.reindex(tickers, fill_value=False).astype(bool)
+    financeira = f.groupby("ticker")["provavel_financeira"].any()
+    balanco["provavel_financeira"] = financeira.reindex(tickers, fill_value=False).astype(bool)
+    return balanco
 
 
 def lucro_preco(janela: Dados, tickers: list[str]) -> pd.Series:
@@ -97,17 +119,19 @@ def quality(janela: Dados, tickers: list[str], metodo: str, pl_negativo: str) ->
     """Nota de Quality = média das notas de ROE (alto) e Dív/PL (baixo).
 
     P2: bancos e seguradoras não têm Dív/PL. Recebem a nota mediana nesse componente, sem
-        prêmio nem punição.
+        prêmio nem punição. Empresa NÃO financeira sem Dív/PL fica sem nota de Quality
+        (dado faltando, não setor sem o indicador), e elegiveis_defensivo a deixa de fora.
     P3: com patrimônio líquido negativo, o Dív/PL fica negativo (pareceria a menor dívida de
         todas) e o ROE troca de sinal. pl_negativo = 'excluir' tira a empresa do ranking;
         'pior_nota' a mantém com a pior nota de Quality.
     """
     balanco = ultimo_balanco(janela, tickers)
-    negativo = balanco["div_pl"] < 0
+    negativo = balanco["patrimonio_negativo"]
     validas = balanco[~negativo]  # o ranking é feito só entre empresas com PL positivo
     nota_div = nota(validas["div_pl"], maior_melhor=False, metodo=metodo)
-    nota_quality = (nota(validas["roe"], maior_melhor=True, metodo=metodo)
-                    + nota_div.fillna(nota_div.median())) / 2
+    financeira_sem_div = validas["provavel_financeira"] & validas["div_pl"].isna()
+    nota_div[financeira_sem_div] = nota_div.median()  # P2: só financeira ganha a mediana
+    nota_quality = (nota(validas["roe"], maior_melhor=True, metodo=metodo) + nota_div) / 2
     nota_quality = nota_quality.reindex(tickers)
     if pl_negativo == "pior_nota":
         nota_quality[negativo] = nota_quality.min()
