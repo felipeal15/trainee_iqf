@@ -25,6 +25,8 @@ Carteira de **risco moderado**: a maior parte protege, a menor busca crescimento
 2. **Momentum (sequencial):** entre elas, ficam as **30% com maior retorno em 12 meses, ignorando o último mês** (12-1).
 3. Peso igual entre as ações selecionadas.
 
+> **Desde 13/11/2026 (P18), o bloco agressivo é interseccional:** nota de Size (menor = melhor) + nota de Momentum 12-1 (maior = melhor), no mesmo conjunto elegível; ficam as 30% melhores pela soma; peso igual, mensal, 35%. A regra sequencial acima é a da Entrega 1 e continua no código (`COMBINACAO_AGRESSIVO = "sequencial"`) só para comparação.
+
 ### Métricas por fator
 
 | Fator | Métrica | Base |
@@ -156,6 +158,7 @@ Conferência: WEGE3 tem lucro 12m implícito de cerca de R\$ 6,3 bi, coerente co
 | P15 | **Quality com dados de um balanço só, e mediana de Dív/PL só para financeiras** (13/11/2026) | **Corrigido**, em duas partes. (1) `ultimo_balanco()` pegava o último valor não vazio de cada coluna, então o ROE podia vir de um trimestre e o Dív/PL de outro. Agora ROE e Dív/PL vêm do **mesmo balanço**: o mais recente já divulgado em que o ROE existe. Se o Dív/PL estiver vazio nele, fica vazio. **Exceção necessária:** o Economatica nunca calcula ROE com PL negativo (100% dos 2.541 casos com Dív/PL < 0). O balanço "com ROE" é, portanto, sempre de antes de o PL ficar negativo, e a P3 nunca seria acionada (ex.: BEEF3 em 2016 e AMER3 em 2023 voltariam ao ranking com o PL antigo). Por isso a situação do PL (`patrimonio_negativo`) vem do balanço mais recente com Dív/PL. O `lucro_12m_mil` do Value continua sendo o último lucro divulgado, buscado à parte: o L/P combina de propósito o lucro mais recente com o preço de hoje, e amarrá-lo ao balanço do ROE deixaria o lucro mais velho sem motivo (31 casos). (2) A mediana de Dív/PL (P2) agora vale só para `provavel_financeira`. Não financeira sem Dív/PL fica sem nota de Quality e fora de `elegiveis_defensivo`, que passou a exigir Dív/PL ou ser financeira, para manter as duas notas no mesmo conjunto (P14). Na base atual não há nenhum caso desses no universo (BRAP4 e TIMS3 já ficavam fora por não terem ROE), então a parte (2) não muda nenhum número: é uma proteção para quando a base mudar (P11). Efeito total no padrão: 1 de 64 trimestres alterado, CAGR da carteira 11,33% → 11,30%. **Ressalva:** `provavel_financeira` é calculada na limpeza com a base inteira ("nunca teve Dív/PL"), ou seja, olha o histórico todo do ticker. Funciona como classificação de setor, mas vale declarar |
 | P16 | **Custo de transação proporcional ao giro** (correção 3 do monitor, 13/11/2026) | **Implementado.** `CUSTO_OPERACAO = 0.002` (0,2% sobre o valor negociado, em cada compra e cada venda; exemplo da Aula 3), em `estrategia.py`. Em cada rebalanceamento de um bloco, giro = Σ \|peso novo − peso antigo\|, com o peso antigo **já andado com os preços** desde o rebalanceamento anterior (buy-and-hold). Ativo que sai tem peso novo 0 e ativo que entra tem peso antigo 0: trocar tudo dá giro 2, e a primeira montagem dá giro 1. Custo = giro × `CUSTO_OPERACAO`, pago no primeiro pregão depois do rebalanceamento: o retorno desse dia vira (1 + r)(1 − custo) − 1. A volta a 65/35 (P10) também paga: giro = Σ \|peso-alvo do bloco − peso antes\|, sem custo na primeira data, porque a montagem já está nos blocos. O custo fica no motor (`rodar_backtest(..., custo_operacao=)`, `calcular_giro`, `pesos_finais`, `descontar_custo` em `backtest.py`) e serve para qualquer `selecionar()`. Com custo 0, o resultado é idêntico bit a bit ao anterior (testado). **Simplificações:** custo igual para todas as ações (sem spread/impacto por liquidez); a volta a 65/35 é tratada à parte do giro interno dos blocos, então uma venda que as duas coisas pedem é contada duas vezes (efeito pequeno: 0,03% a.a.) |
 | P17 | **Empresa identificada pelo valor de mercado, não só pelas 4 letras** (13/11/2026) | **Corrigido.** Com as canceladas na base, AMBV4 e ABEV3 (Ambev, troca de código em 2013) entravam juntas no universo de 10/2011 a 10/2013 (25 meses), porque têm prefixos diferentes: a Ambev contava duas vezes. Como o Economatica dá o valor de mercado da EMPRESA, igual em todas as classes (AMBV4 = ABEV3 em 322 de 322 meses), `identificar_empresas()` em `universo.py` junta na mesma empresa os tickers com as mesmas 4 letras **ou** o mesmo valor de mercado na data, e continua ficando a classe mais líquida. Ticker sem valor de mercado fica só com o critério das letras. Na base nova, a Ambev é o único caso no universo; na base antiga, a regra não muda nada (testado). Efeito: defensivo alterado em 4 de 64 trimestres e agressivo em 2 de 190 meses; CAGR da carteira com custo de 0,2% 9,01% → 8,96% |
+| P18 | **Bloco agressivo interseccional** (decisão do grupo registrada em **13/11/2026, 17:48**, ANTES de rodar esta variante) | **Regra nova:** nota de Size (menor valor de mercado = melhor) + nota de Momentum 12-1 (maior = melhor), as duas calculadas sobre o MESMO conjunto elegível (ações do universo com valor de mercado e momentum válidos, mesma lógica da P14), somadas; ficam as 30% maiores pela soma. Peso igual, rebalanceamento mensal, 35% da carteira, mesmo `METODO_NOTA` do defensivo. **Justificativa:** (1) Aula 1 da liga, slide 15: combinações sequenciais "priorizam" o primeiro fator, e as interseccionais "equilibram a influência dos dois fatores"; (2) coerência com o bloco defensivo, que já soma Quality + Low Vol; (3) causas 2 e 3 do diagnóstico: o funil sequencial leva o Momentum para o pior pedaço do universo, e a fatia de 30% de 30% deixa a carteira com ~7 ações; (4) nenhum parâmetro novo: a fatia de 30% é a mesma da Entrega 1. **Compromisso:** a regra será mantida independentemente do resultado. A versão sequencial continua disponível só para comparação |
 
 P5, P6, P7 e P10 (trimestral) já estão implementados como parâmetros, com as recomendações acima.
 
@@ -292,6 +295,32 @@ Causas, em ordem de importância: (1) o prêmio de Size foi negativo no período
 
 **Cuidado com overfitting:** o resultado do "Só Momentum" já foi visto. Qualquer mudança no bloco tem de ser justificada pela lógica e pela literatura, não por esta tabela, e o paper precisa dizer que este diagnóstico foi feito antes da mudança.
 
+**Bloco agressivo interseccional (P18)**, 13/11/2026. A regra foi registrada na P18 às 17:48, antes de qualquer execução, e é mantida como foi registrada. A versão sequencial reproduz bit a bit o resultado anterior (testado). Mesmo defensivo, universo, fatias, pesos, custo e rebalanceamento. A partir daqui, o **resultado principal** é o interseccional com custo de 0,2%.
+
+| | Custo | Sequencial (Entrega 1): CAGR / Vol / Sharpe / Max DD / Alpha / Beta | Interseccional (P18) |
+|---|---|---|---|
+| Carteira 65/35 | 0,2% | 8,96% / 21,3% / 0,06 / −44,2% / 1,34% / 0,81 | **11,06% / 20,0% / 0,15 / −43,7% / 3,02% / 0,79** |
+| Carteira 65/35 | 0% | 10,01% / 21,3% / 0,11 / −44,2% / 2,31% / 0,81 | 11,85% / 20,0% / 0,19 / −43,6% / 3,74% / 0,79 |
+| Defensivo | 0,2% | 12,30% / 19,5% / 0,21 / −37,9% / 4,04% / 0,74 | igual (o defensivo não mudou) |
+| Defensivo | 0% | 12,81% / 19,5% / 0,23 / −37,8% / 4,49% / 0,74 | igual |
+| Agressivo | 0,2% | 1,41% / 30,4% / −0,12 / −64,1% / −3,54% / 0,94 | **7,82% / 24,1% / 0,04 / −55,7% / 0,95% / 0,88** |
+| Agressivo | 0% | 3,28% / 30,4% / −0,05 / −62,1% / −1,68% / 0,94 | 9,04% / 24,1% / 0,09 / −55,7% / 2,10% / 0,89 |
+
+| Bloco agressivo (custo 0,2%) | Sequencial | Interseccional |
+|---|---|---|
+| Ações por carteira (mín / média / máx) | 6 / 6,9 / 7 | 23 / 24,7 / 26 |
+| Giro médio por mês / giro anual | 76% / 914% | 47% / 563% |
+| Custo anual do bloco | 1,83% | 1,13% |
+| Valor de mercado mediano das escolhidas (média das datas; 2023-26) | R\$ 5,5 bi; R\$ 6,3 bi | R\$ 8,0 bi; R\$ 9,4 bi |
+| Risco específico (1 − R² contra o universo) | 34% | 12% |
+| Correlação diária com o defensivo | 0,67 | **0,80** |
+
+Leitura:
+- **O bloco continua com viés de tamanho.** A mediana das escolhidas (R\$ 8,0 bi) fica bem abaixo da mediana do universo (R\$ 14,4 bi), mas acima da das 30% menores (R\$ 5,1 bi).
+- **O Size continua puxando para baixo.** O interseccional (7,82%) fica abaixo do Momentum sozinho (11,13%) e abaixo do CDI (9,93%), embora acima do Ibovespa (7,11%) e do universo peso igual (6,45%).
+- **Ficou mais parecido com o defensivo** (correlação de 0,67 para 0,80), então diversifica menos a carteira.
+- **Nada disso justifica mudar a regra:** a P18 foi registrada para ser mantida independentemente do resultado. O diagnóstico completo da variante nova está em `resultados/diagnostico_interseccional/` (`python src/diagnostico.py interseccional`).
+
 ---
 
 ## 6. Estrutura do repositório
@@ -313,7 +342,8 @@ iqf-factor-strategy/
 │   ├── estrategia.py    ← feito: blocos defensivo e agressivo, carteira 65/35
 │   ├── metricas.py      ← feito: CAGR, Sharpe, drawdown, alpha/beta
 │   ├── graficos.py      ← feito: gráficos da Aula 2
-│   └── diagnostico.py   ← diagnóstico do bloco agressivo (gera resultados/diagnostico/)
+│   └── diagnostico.py   ← diagnóstico do bloco agressivo (resultados/diagnostico/ = sequencial;
+│                          resultados/diagnostico_interseccional/ = P18)
 └── notebooks/
     └── entrega2_backtest.ipynb  ← resultado da Entrega 2 (métricas e gráficos)
 ```
@@ -351,3 +381,4 @@ O uso de GenAI é **obrigatório** e vale **15% da nota** no Desafio (critério 
 | 13/11/2026 | Base com canceladas (P11) | Claude | Rodou a limpeza na base nova (1.117 tickers, 94 financeiras), conferiu as financeiras que entram no universo, guardou a base antiga e mediu o efeito isolado do viés de sobrevivência nas duas bases, com e sem custo, além do teste de sanidade. Decompôs a causa: peso e retorno das ações canceladas em cada bloco | Viés medido: −1,33 p.p. no CAGR da carteira com custo (10,34% → 9,01%), maior no defensivo em p.p. A hipótese de que pesaria mais em Size/Momentum não se confirmou |
 | 13/11/2026 | Identificação da empresa (P17) | Claude | Verificou que AMBV4 e ABEV3 têm o mesmo valor de mercado em todos os meses e que a Ambev é o único par desses no universo; implementou `identificar_empresas()` (4 letras ou mesmo valor de mercado) e testou que a base antiga não muda | Ambev deixa de contar duas vezes em 2011-13. CAGR da carteira com custo 9,01% → 8,96% |
 | 13/11/2026 | Diagnóstico do bloco agressivo | Claude | Escreveu `diagnostico.py` (contribuição por ação, Size e Momentum separados no mesmo universo, tamanho em R\$ bi, concentração, subperíodos, momentum crash com estado definido antes de olhar o resultado, custo, papel na carteira) e classificou 11 hipóteses em confirmada/refutada/inconclusiva, sem mudar a estratégia | Causa principal identificada: o Size falha (−1,9% a.a.) e o funil sequencial leva o Momentum (11,1% sozinho) para o pior pedaço do universo. Base para a mudança lógica do bloco, a justificar pela literatura |
+| 13/11/2026 | Bloco agressivo interseccional (P18) | Claude | Registrou a P18 no contexto (17:48) antes de rodar a variante; implementou `COMBINACAO_AGRESSIVO` com a regra interseccional (mesmo conjunto elegível da P14, mesma fatia de 30%), mantendo a sequencial para comparação e testando que ela reproduz o resultado anterior bit a bit; adaptou `diagnostico.py` para rodar qualquer combinação sem copiar a regra; comparou as duas versões sem propor ajustes | Carteira com custo 8,96% → 11,06% (acima do CDI); agressivo 1,41% → 7,82%, com 25 ações em vez de 7. O bloco segue abaixo do CDI e mais correlacionado com o defensivo (0,80) |

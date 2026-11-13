@@ -15,12 +15,16 @@ custo (CUSTO_OPERACAO) e o mesmo rebalanceamento mensal, e só DESCREVE o result
     7. Papel do bloco agressivo na carteira 65/35
 
 Uso (a partir da raiz do projeto):
-    python src/diagnostico.py   # grava tabelas (.csv), gráficos (.png) e resumo.md em
-                                # resultados/diagnostico/
+    python src/diagnostico.py                  # bloco padrão (COMBINACAO_AGRESSIVO)
+    python src/diagnostico.py sequencial       # bloco da Entrega 1 -> resultados/diagnostico/
+    python src/diagnostico.py interseccional   # P18 -> resultados/diagnostico_interseccional/
+Grava tabelas (.csv), gráficos (.png) e resumo.md. Com a variante interseccional, a seção 2
+também mostra o bloco sequencial, para comparar.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -30,18 +34,27 @@ from matplotlib.ticker import PercentFormatter
 
 from backtest import LOOKBACK, Resultado, datas_rebalanceamento, rodar_backtest
 from dados import RAIZ, Dados, carregar_dados
-from estrategia import (CUSTO_OPERACAO, FATIA_MOMENTUM, FATIA_SIZE, PESO_AGRESSIVO,
-                        PESO_DEFENSIVO, juntar_blocos, melhores, rodar_estrategia)
+from estrategia import (COMBINACAO_AGRESSIVO, CUSTO_OPERACAO, FATIA_MOMENTUM, FATIA_SIZE,
+                        PESO_AGRESSIVO, PESO_DEFENSIVO, escolher_agressivo, juntar_blocos,
+                        melhores, rodar_estrategia)
 from fatores import momentum, tamanho
 from graficos import (CORES, EIXO, TINTA_SECUNDARIA, _eixo_datas, _titulo, acumulado,
                       aplicar_estilo, retornos_anuais, underwater)
 from metricas import cagr, curva, periodos_drawdown, resumo
 from universo import universo_liquido
 
-SAIDA = RAIZ / "resultados" / "diagnostico"
+SAIDA = RAIZ / "resultados" / "diagnostico"  # trocada em main() conforme a combinação
+
+
+def pasta_saida(combinacao: str) -> Path:
+    """O diagnóstico original (sequencial) fica em resultados/diagnostico/; os outros, ao lado."""
+    nome = "diagnostico" if combinacao == "sequencial" else f"diagnostico_{combinacao}"
+    return RAIZ / "resultados" / nome
+
 
 # Nomes das séries (os da estratégia usam as cores fixas de graficos.py)
 AGR, DEF, CART = "Bloco agressivo", "Bloco defensivo", "Estratégia 65/35"
+SEQ = "Bloco agressivo sequencial (Entrega 1)"
 UNIV, SIZE, MOM, PERD = ("Universo peso igual", "Só Size (30% menores)",
                          "Só Momentum (30% maiores)", "Perdedoras de Momentum (30% menores)")
 
@@ -95,17 +108,20 @@ def mensal(retornos: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Variantes do bloco (mesmo universo, mesmo custo, mesmo rebalanceamento)
 # ---------------------------------------------------------------------------
-def rodar_variantes(dados: Dados, datas: pd.DatetimeIndex) -> dict[float, dict[str, Resultado]]:
+def rodar_variantes(dados: Dados, datas: pd.DatetimeIndex,
+                    combinacao: str) -> dict[float, dict[str, Resultado]]:
     """Roda cada variante com custo 0 e com CUSTO_OPERACAO. O universo de cada data é
-    calculado uma vez e reaproveitado."""
+    calculado uma vez e reaproveitado. "Bloco agressivo" usa a MESMA função da estratégia."""
     univ = {t: universo_liquido(dados.janela(t, LOOKBACK), t) for t in datas}
     regras = {
         UNIV: lambda j, u: u,
         SIZE: lambda j, u: melhores(-tamanho(j, u), FATIA_SIZE),
         MOM: lambda j, u: melhores(momentum(j, u), FATIA_MOMENTUM),
-        AGR: lambda j, u: melhores(momentum(j, melhores(-tamanho(j, u), FATIA_SIZE)), FATIA_MOMENTUM),
+        AGR: lambda j, u: escolher_agressivo(j, u, combinacao),
         PERD: lambda j, u: melhores(-momentum(j, u), FATIA_MOMENTUM),
     }
+    if combinacao != "sequencial":
+        regras[SEQ] = lambda j, u: escolher_agressivo(j, u, "sequencial")
     saida = {}
     for custo in (0.0, CUSTO_OPERACAO):
         saida[custo] = {nome: rodar_backtest(dados, datas, lambda j, t, f=f: f(j, univ[t]),
@@ -275,16 +291,19 @@ def momentum_crash(m: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 # ---------------------------------------------------------------------------
 # Programa
 # ---------------------------------------------------------------------------
-def main() -> None:
+def main(combinacao: str = COMBINACAO_AGRESSIVO) -> None:
+    global SAIDA
+    SAIDA = pasta_saida(combinacao)
     SAIDA.mkdir(parents=True, exist_ok=True)
     aplicar_estilo()
-    print("Carregando dados...")
+    print(f"Bloco agressivo: {combinacao}. Carregando dados...")
     dados = carregar_dados()
     mensais = datas_rebalanceamento(dados.calendario, "M")
-    print("Rodando a estratégia padrão (sem custo e com custo)...")
-    est = {c: rodar_estrategia(dados, custo_operacao=c) for c in (0.0, CUSTO_OPERACAO)}
+    print("Rodando a estratégia (sem custo e com custo)...")
+    est = {c: rodar_estrategia(dados, custo_operacao=c, combinacao_agressivo=combinacao)
+           for c in (0.0, CUSTO_OPERACAO)}
     print("Rodando as variantes do bloco agressivo...")
-    var = rodar_variantes(dados, mensais)
+    var = rodar_variantes(dados, mensais, combinacao)
     # A variante "Bloco agressivo" tem de ser exatamente o bloco da estratégia
     assert var[CUSTO_OPERACAO][AGR].carteiras == est[CUSTO_OPERACAO].agressivo.carteiras
     assert var[CUSTO_OPERACAO][AGR].retornos.equals(est[CUSTO_OPERACAO].agressivo.retornos)
@@ -294,7 +313,8 @@ def main() -> None:
     ibov, cdi = dados.ibov.reindex(idx).rename("Ibovespa"), dados.cdi.reindex(idx).rename("CDI")
     r = pd.DataFrame({nome: res.retornos for nome, res in v.items()}).assign(Ibovespa=ibov, CDI=cdi)
     r0 = pd.DataFrame({nome: res.retornos for nome, res in var[0.0].items()}).assign(Ibovespa=ibov)
-    rel = [f"# Diagnóstico do bloco agressivo\n\nGerado por `python src/diagnostico.py`. "
+    rel = [f"# Diagnóstico do bloco agressivo ({combinacao})\n\n"
+           f"Gerado por `python src/diagnostico.py {combinacao}`. "
            f"Período {idx[0]:%d/%m/%Y} a {idx[-1]:%d/%m/%Y}; custo principal {pct(CUSTO_OPERACAO)} "
            "por operação. Nada aqui muda a estratégia.\n"]
 
@@ -329,13 +349,14 @@ def main() -> None:
             "\n### 15 maiores\n", md(fmt_por(por.tail(15).iloc[::-1])), "\n![](1_contribuicao.png)\n"]
 
     # 2. Size x Momentum ---------------------------------------------------------------------
-    t2 = pd.concat({"custo 0,2%": tabela_metricas(r[[UNIV, SIZE, MOM, AGR, "Ibovespa", "CDI"]], dados),
-                    "sem custo": tabela_metricas(r0[[UNIV, SIZE, MOM, AGR, "Ibovespa"]], dados)})
+    series2 = [UNIV, SIZE, MOM] + ([SEQ] if SEQ in v else []) + [AGR]
+    t2 = pd.concat({"custo 0,2%": tabela_metricas(r[series2 + ["Ibovespa", "CDI"]], dados),
+                    "sem custo": tabela_metricas(r0[series2 + ["Ibovespa"]], dados)})
     t2.to_csv(SAIDA / "2_size_x_momentum.csv")
     giros = pd.DataFrame({n: {"ações por carteira": f"{np.mean([len(c) for c in v[n].carteiras.values()]):.0f}",
                               "giro médio por mês": pct(v[n].giro.iloc[1:].mean(), 0)}
-                          for n in [UNIV, SIZE, MOM, AGR]}).T.rename_axis("variante")
-    salvar(acumulado(r[[UNIV, SIZE, MOM, AGR, "CDI"]], "Size e Momentum separados, mesmo universo",
+                          for n in series2}).T.rename_axis("variante")
+    salvar(acumulado(r[series2 + ["CDI"]], "Size e Momentum separados, mesmo universo",
                      f"Peso igual, mensal, custo de {pct(CUSTO_OPERACAO)}"), "2_size_x_momentum.png")
     rel += ["\n## 2. Size e Momentum separados (mesmo universo, mesmo custo, mensal)\n",
             md(t2.reset_index(level=0).rename(columns={"level_0": "custo"})), "\n", md(giros),
@@ -396,10 +417,13 @@ def main() -> None:
         "custo pago por ano (soma simples)": pct(v[AGR].custo.sum() / anos, 2),
         "custo acumulado (composto)": pct(1 - (1 - v[AGR].custo).prod(), 1),
         "distância até o CDI (com custo)": pct(cdi_cagr - a2, 2),
-        "parte dessa distância explicada pelo custo": pct((a0 - a2) / (cdi_cagr - a2), 0),
+        # "parte explicada" só faz sentido se o bloco ficou ABAIXO da referência
+        "parte dessa distância explicada pelo custo":
+            pct((a0 - a2) / (cdi_cagr - a2), 0) if cdi_cagr > a2 else "— (bloco acima do CDI)",
         "distância até o universo peso igual (ambos com custo)": pct(univ_cagr - a2, 2),
-        "parte dessa distância explicada pelo custo extra": pct(
-            ((a0 - a2) - (cagr(r0[UNIV]) - univ_cagr)) / (univ_cagr - a2), 0),
+        "parte dessa distância explicada pelo custo extra":
+            pct(((a0 - a2) - (cagr(r0[UNIV]) - univ_cagr)) / (univ_cagr - a2), 0)
+            if univ_cagr > a2 else "— (bloco acima do universo)",
     }, name="valor").rename_axis("medida").to_frame()
     t6.to_csv(SAIDA / "6_custo.csv")
     custo_df = pd.DataFrame({"Bloco agressivo sem custo": est[0.0].agressivo.retornos, AGR: r[AGR]})
@@ -446,4 +470,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else COMBINACAO_AGRESSIVO)

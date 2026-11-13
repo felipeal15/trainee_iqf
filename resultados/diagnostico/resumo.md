@@ -1,6 +1,6 @@
-# Diagnóstico do bloco agressivo
+# Diagnóstico do bloco agressivo (sequencial)
 
-Gerado por `python src/diagnostico.py`. Período 03/01/2011 a 23/10/2026; custo principal 0,2% por operação. Nada aqui muda a estratégia.
+Gerado por `python src/diagnostico.py sequencial`. Período 03/01/2011 a 23/10/2026; custo principal 0,2% por operação. Nada aqui muda a estratégia.
 
 ## 1. Contribuição por ação
 

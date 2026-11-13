@@ -5,9 +5,11 @@ Bloco defensivo, rebalanceado a cada trimestre:
     1. nota combinada = Quality (ROE alto, dívida baixa) + Low Vol
     2. ficam as 30% melhores pela nota combinada
     3. entre elas, ficam as 50% mais baratas (maior L/P)
-Bloco agressivo, rebalanceado todo mês:
-    1. Size: as 30% menores por valor de mercado
-    2. entre elas, as 30% com maior Momentum 12-1
+Bloco agressivo, rebalanceado todo mês (P18, interseccional, como o defensivo):
+    1. nota combinada = Size (menor valor de mercado) + Momentum 12-1 (maior)
+    2. ficam as 30% melhores pela nota combinada
+    (Entrega 1, sequencial: as 30% menores e, entre elas, as 30% com maior Momentum.
+     Continua disponível com COMBINACAO_AGRESSIVO = "sequencial".)
 Peso igual dentro de cada bloco. A carteira volta para 65/35 a cada trimestre (P10) e,
 entre um trimestre e outro, os pesos dos blocos andam com o mercado.
 Custo de transação (P16): CUSTO_OPERACAO sobre o giro de cada rebalanceamento, dentro de cada
@@ -40,12 +42,18 @@ PESO_DEFENSIVO = 0.65
 PESO_AGRESSIVO = 0.35
 FATIA_QUALITY_LOWVOL = 0.30  # defensivo, passo 1: as 30% melhores pela nota combinada
 FATIA_VALUE = 0.50           # defensivo, passo 2: as 50% mais baratas entre elas
-FATIA_SIZE = 0.30            # agressivo, passo 1: as 30% menores
-FATIA_MOMENTUM = 0.30        # agressivo, passo 2: as 30% com maior momentum entre elas
+FATIA_SIZE = 0.30            # agressivo sequencial, passo 1: as 30% menores
+FATIA_MOMENTUM = 0.30        # agressivo sequencial, passo 2: as 30% com maior momentum entre elas
+# Agressivo interseccional (P18): as 30% melhores pela soma das notas. É a MESMA fatia de 30%
+# da Entrega 1, não um parâmetro novo.
+FATIA_SIZE_MOMENTUM = FATIA_SIZE
 
 # Escolhas testadas no notebook (ver contexto.md). Estes são os valores padrão.
 METODO_NOTA = "rank"   # "rank" (percentil) ou "zscore"
 PL_NEGATIVO = "excluir"  # P3: "excluir" ou "pior_nota"
+# P18: "interseccional" (Size + Momentum somados, padrão desde 13/11/2026) ou "sequencial"
+# (Size e depois Momentum, a versão da Entrega 1, mantida para comparação)
+COMBINACAO_AGRESSIVO = "interseccional"
 
 # P16: custo sobre o valor negociado, em cada compra e cada venda (exemplo da Aula 3).
 # 0 = sem custo (a versão da Entrega 2).
@@ -100,10 +108,35 @@ def selecionar_defensivo(janela: Dados, data_atual: pd.Timestamp,
     return melhores(lucro_preco(janela, candidatas), FATIA_VALUE)
 
 
-def selecionar_agressivo(janela: Dados, data_atual: pd.Timestamp) -> list[str]:
-    tickers = universo_liquido(janela, data_atual)
-    pequenas = melhores(-tamanho(janela, tickers), FATIA_SIZE)
-    return melhores(momentum(janela, pequenas), FATIA_MOMENTUM)
+def elegiveis_agressivo(janela: Dados, tickers: list[str]) -> list[str]:
+    """Ações que entram no ranking de Size + Momentum: têm valor de mercado e Momentum 12-1
+    (12 meses de histórico). As duas notas são calculadas sobre ESTE conjunto (P18, mesma
+    lógica da P14)."""
+    valido = tamanho(janela, tickers).notna() & momentum(janela, tickers).notna()
+    return list(valido[valido].index)
+
+
+def escolher_agressivo(janela: Dados, tickers: list[str], combinacao: str = COMBINACAO_AGRESSIVO,
+                       metodo: str = METODO_NOTA) -> list[str]:
+    """Escolha do bloco agressivo dentro de `tickers` (o universo da data).
+        'interseccional' (P18): nota de Size (menor = melhor) + nota de Momentum (maior =
+            melhor), no mesmo conjunto elegível; ficam as 30% melhores pela soma.
+        'sequencial' (Entrega 1): as 30% menores e, entre elas, as 30% com maior Momentum."""
+    if combinacao == "interseccional":
+        elegiveis = elegiveis_agressivo(janela, tickers)
+        combinada = (nota(tamanho(janela, elegiveis), False, metodo)
+                     + nota(momentum(janela, elegiveis), True, metodo))
+        return melhores(combinada, FATIA_SIZE_MOMENTUM)
+    if combinacao == "sequencial":
+        pequenas = melhores(-tamanho(janela, tickers), FATIA_SIZE)
+        return melhores(momentum(janela, pequenas), FATIA_MOMENTUM)
+    raise ValueError(f"combinação do bloco agressivo desconhecida: {combinacao}")
+
+
+def selecionar_agressivo(janela: Dados, data_atual: pd.Timestamp,
+                         combinacao: str = COMBINACAO_AGRESSIVO,
+                         metodo: str = METODO_NOTA) -> list[str]:
+    return escolher_agressivo(janela, universo_liquido(janela, data_atual), combinacao, metodo)
 
 
 # ---------------------------------------------------------------------------
@@ -130,13 +163,17 @@ def juntar_blocos(blocos: pd.DataFrame, pesos: pd.Series, datas_rebal: pd.Dateti
 
 
 def rodar_estrategia(dados: Dados, metodo: str = METODO_NOTA, pl_negativo: str = PL_NEGATIVO,
-                     custo_operacao: float = CUSTO_OPERACAO) -> ResultadoEstrategia:
+                     custo_operacao: float = CUSTO_OPERACAO,
+                     combinacao_agressivo: str = COMBINACAO_AGRESSIVO) -> ResultadoEstrategia:
     trimestral = datas_rebalanceamento(dados.calendario, "Q")
     mensal = datas_rebalanceamento(dados.calendario, "M")
     defensivo = rodar_backtest(dados, trimestral,
                                partial(selecionar_defensivo, metodo=metodo, pl_negativo=pl_negativo),
                                custo_operacao=custo_operacao)
-    agressivo = rodar_backtest(dados, mensal, selecionar_agressivo, custo_operacao=custo_operacao)
+    agressivo = rodar_backtest(dados, mensal,
+                               partial(selecionar_agressivo, combinacao=combinacao_agressivo,
+                                       metodo=metodo),
+                               custo_operacao=custo_operacao)
     blocos = pd.DataFrame({"defensivo": defensivo.retornos, "agressivo": agressivo.retornos})
     pesos = pd.Series({"defensivo": PESO_DEFENSIVO, "agressivo": PESO_AGRESSIVO})
     carteira, giro = juntar_blocos(blocos, pesos, trimestral, custo_operacao)
