@@ -26,7 +26,7 @@ import pandas as pd
 
 from backtest import Resultado, datas_rebalanceamento, rodar_backtest, retornos_buy_and_hold
 from dados import Dados, carregar_dados
-from fatores import low_vol, lucro_preco, momentum, nota, quality, tamanho
+from fatores import low_vol, lucro_preco, momentum, nota, quality, tamanho, ultimo_balanco
 from metricas import formatar, resumo
 from universo import universo_liquido
 
@@ -62,12 +62,29 @@ def melhores(valores: pd.Series, fatia: float) -> list[str]:
 # ---------------------------------------------------------------------------
 # Blocos
 # ---------------------------------------------------------------------------
+def elegiveis_defensivo(janela: Dados, tickers: list[str], pl_negativo: str) -> list[str]:
+    """Empresas que entram no ranking de Quality + Low Vol: têm ROE, têm Low Vol (12 meses de
+    histórico) e, com pl_negativo='excluir', não têm patrimônio líquido negativo (P3).
+
+    As duas notas são calculadas sobre ESTE conjunto. Se cada nota usasse um grupo diferente,
+    um percentil de 0,8 em Quality e um de 0,8 em Low Vol não significariam a mesma coisa,
+    e a soma deixaria de dar o mesmo peso aos dois fatores."""
+    if pl_negativo not in ("excluir", "pior_nota"):
+        raise ValueError(f"tratamento de PL negativo desconhecido: {pl_negativo}")
+    balanco = ultimo_balanco(janela, tickers)
+    elegivel = balanco["roe"].notna() & low_vol(janela, tickers).notna()
+    if pl_negativo == "excluir":
+        elegivel &= ~(balanco["div_pl"] < 0)
+    return list(elegivel[elegivel].index)
+
+
 def selecionar_defensivo(janela: Dados, data_atual: pd.Timestamp,
                          metodo: str = METODO_NOTA, pl_negativo: str = PL_NEGATIVO) -> list[str]:
     tickers = universo_liquido(janela, data_atual)
-    # Quality e Low Vol viram nota na mesma escala antes de somar, para nenhuma dominar
-    combinada = (nota(quality(janela, tickers, metodo, pl_negativo), True, metodo)
-                 + nota(low_vol(janela, tickers), False, metodo))
+    # Primeiro o conjunto elegível; depois as duas notas sobre ele, na mesma régua, e a soma
+    elegiveis = elegiveis_defensivo(janela, tickers, pl_negativo)
+    combinada = (nota(quality(janela, elegiveis, metodo, pl_negativo), True, metodo)
+                 + nota(low_vol(janela, elegiveis), False, metodo))
     candidatas = melhores(combinada, FATIA_QUALITY_LOWVOL)
     return melhores(lucro_preco(janela, candidatas), FATIA_VALUE)
 
