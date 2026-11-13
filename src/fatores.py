@@ -31,6 +31,9 @@ PREGOES_MES = 21
 # Low Vol e Momentum só valem com histórico: a ação precisa ter negociado em pelo menos 80%
 # dos últimos 252 pregões (uma estreia recente não tem 12 meses de retorno)
 HISTORICO_MINIMO = 0.8
+# Janela dos fatores de preço (Low Vol e Momentum), em pregões: 12 meses. Só muda no teste de
+# robustez (P20, robustez.py); o Momentum sempre pula o último mês (12-1, 9-1, 6-1).
+JANELA_FATORES_PRECO = PREGOES_ANO
 # No z-score, valores além de 3 desvios são cortados (ROE de 300%, Dív/PL de 5.000%)
 LIMITE_ZSCORE = 3.0
 
@@ -39,9 +42,10 @@ LIMITE_ZSCORE = 3.0
 # Métricas
 # ---------------------------------------------------------------------------
 def _retornos_12m(janela: Dados, tickers: list[str]) -> tuple[pd.DataFrame, pd.Series]:
-    """Últimos 252 retornos diários e se a ação tem histórico suficiente."""
-    r = janela.retorno.reindex(columns=tickers).iloc[-PREGOES_ANO:]
-    tem_historico = r.notna().sum() >= HISTORICO_MINIMO * PREGOES_ANO
+    """Últimos JANELA_FATORES_PRECO retornos diários (252 = 12 meses) e se a ação tem
+    histórico suficiente."""
+    r = janela.retorno.reindex(columns=tickers).iloc[-JANELA_FATORES_PRECO:]
+    tem_historico = r.notna().sum() >= HISTORICO_MINIMO * JANELA_FATORES_PRECO
     return r, tem_historico
 
 

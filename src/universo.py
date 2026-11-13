@@ -54,14 +54,29 @@ def identificar_empresas(tickers: list[str], valor_mercado: pd.Series) -> pd.Ser
     return pd.Series({t: raiz(t) for t in tickers})
 
 
-def universo_liquido(janela: Dados, data_atual: pd.Timestamp) -> list[str]:
-    """Tickers elegíveis em data_atual, com uma classe por empresa."""
+def _liquidez(janela: Dados, data_atual: pd.Timestamp) -> pd.Series:
+    """Volume financeiro médio (R$ mil/dia) nos últimos 3 meses das ações negociadas em pelo
+    menos PRESENCA_MINIMA dos pregões. Dia sem negócio conta como volume zero."""
     vol = janela.volume.loc[janela.volume.index > data_atual - JANELA_LIQUIDEZ]
-    presenca = vol.notna().mean()
-    volume_medio = vol.fillna(0).mean()  # dia sem negócio conta como volume zero
-    top = volume_medio[presenca >= PRESENCA_MINIMA].nlargest(N_ATIVOS)
-    # Uma classe por empresa (a mais líquida). Valor de mercado e fundamentos são da empresa:
-    # com PETR3 e PETR4 juntas, a Petrobras contaria duas vezes nos rankings e na carteira.
-    valor_mercado = janela.valor_mercado.reindex(columns=top.index).iloc[-1]
-    mais_liquida = top.groupby(identificar_empresas(list(top.index), valor_mercado)).idxmax()
-    return sorted(mais_liquida)
+    volume_medio = vol.fillna(0).mean()
+    return volume_medio[vol.notna().mean() >= PRESENCA_MINIMA]
+
+
+def _uma_classe_por_empresa(volume_medio: pd.Series, janela: Dados) -> list[str]:
+    """Uma classe por empresa (a mais líquida). Valor de mercado e fundamentos são da empresa:
+    com PETR3 e PETR4 juntas, a Petrobras contaria duas vezes nos rankings e na carteira."""
+    valor_mercado = janela.valor_mercado.reindex(columns=volume_medio.index).iloc[-1]
+    empresas = identificar_empresas(list(volume_medio.index), valor_mercado)
+    return sorted(volume_medio.groupby(empresas).idxmax())
+
+
+def universo_liquido(janela: Dados, data_atual: pd.Timestamp) -> list[str]:
+    """Tickers elegíveis em data_atual: as N_ATIVOS mais líquidas, uma classe por empresa."""
+    return _uma_classe_por_empresa(_liquidez(janela, data_atual).nlargest(N_ATIVOS), janela)
+
+
+def universo_por_piso(janela: Dados, data_atual: pd.Timestamp, piso_mil: float) -> list[str]:
+    """Todas as ações com volume médio de 3 meses >= piso_mil (R$ mil/dia), uma classe por
+    empresa. Usado SÓ no teste de robustez do piso de volume (P20), não na estratégia."""
+    volume_medio = _liquidez(janela, data_atual)
+    return _uma_classe_por_empresa(volume_medio[volume_medio >= piso_mil], janela)

@@ -55,6 +55,11 @@ PL_NEGATIVO = "excluir"  # P3: "excluir" ou "pior_nota"
 # (Size e depois Momentum, a versão da Entrega 1, mantida para comparação)
 COMBINACAO_AGRESSIVO = "interseccional"
 
+# P7: rebalanceamento de cada bloco ("M" mensal, "Q" trimestral, "S" semestral). Só muda no
+# teste de robustez (P20).
+FREQ_AGRESSIVO = "M"
+FREQ_DEFENSIVO = "Q"
+
 # P16: custo sobre o valor negociado, em cada compra e cada venda (exemplo da Aula 3).
 # 0 = sem custo (a versão da Entrega 2).
 CUSTO_OPERACAO = 0.002
@@ -165,18 +170,19 @@ def juntar_blocos(blocos: pd.DataFrame, pesos: pd.Series, datas_rebal: pd.Dateti
 def rodar_estrategia(dados: Dados, metodo: str = METODO_NOTA, pl_negativo: str = PL_NEGATIVO,
                      custo_operacao: float = CUSTO_OPERACAO,
                      combinacao_agressivo: str = COMBINACAO_AGRESSIVO) -> ResultadoEstrategia:
-    trimestral = datas_rebalanceamento(dados.calendario, "Q")
-    mensal = datas_rebalanceamento(dados.calendario, "M")
-    defensivo = rodar_backtest(dados, trimestral,
+    datas_def = datas_rebalanceamento(dados.calendario, FREQ_DEFENSIVO)
+    datas_agr = datas_rebalanceamento(dados.calendario, FREQ_AGRESSIVO)
+    defensivo = rodar_backtest(dados, datas_def,
                                partial(selecionar_defensivo, metodo=metodo, pl_negativo=pl_negativo),
                                custo_operacao=custo_operacao)
-    agressivo = rodar_backtest(dados, mensal,
+    agressivo = rodar_backtest(dados, datas_agr,
                                partial(selecionar_agressivo, combinacao=combinacao_agressivo,
                                        metodo=metodo),
                                custo_operacao=custo_operacao)
     blocos = pd.DataFrame({"defensivo": defensivo.retornos, "agressivo": agressivo.retornos})
     pesos = pd.Series({"defensivo": PESO_DEFENSIVO, "agressivo": PESO_AGRESSIVO})
-    carteira, giro = juntar_blocos(blocos, pesos, trimestral, custo_operacao)
+    # P10: volta a 65/35 nas datas do defensivo, quando os dois blocos rebalanceiam juntos
+    carteira, giro = juntar_blocos(blocos, pesos, datas_def, custo_operacao)
     return ResultadoEstrategia(carteira=carteira, defensivo=defensivo, agressivo=agressivo,
                                giro_entre_blocos=giro,
                                custo_entre_blocos=(giro * custo_operacao).rename("custo"))

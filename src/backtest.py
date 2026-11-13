@@ -64,8 +64,11 @@ class Resultado:
 def datas_rebalanceamento(calendario: pd.DatetimeIndex, frequencia: str,
                           inicio: pd.Timestamp = INICIO,
                           fim: pd.Timestamp | None = FIM) -> pd.DatetimeIndex:
-    """P7: último pregão de cada mês (frequencia='M') ou trimestre ('Q').
-    A primeira data é o último fim de período antes de `inicio`."""
+    """P7: último pregão de cada mês (frequencia='M'), trimestre ('Q') ou semestre ('S', junho
+    e dezembro). A primeira data é o último fim de período antes de `inicio`."""
+    if frequencia == "S":
+        trimestres = datas_rebalanceamento(calendario, "Q", inicio, fim)
+        return trimestres[trimestres.month.isin([6, 12])]
     fim = calendario.max() if fim is None else fim
     pregoes = pd.Series(calendario, index=calendario)
     ultimo_pregao = pregoes.groupby(calendario.to_period(frequencia)).max()
